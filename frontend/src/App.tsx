@@ -256,6 +256,22 @@ function submissionResultHref(submission: Submission) {
   return `?view=dashboard&submission=${submission.campaignId}-${submission.submissionId}#${submissionResultId(submission)}`;
 }
 
+function compactUrlLabel(url: string) {
+  try {
+    const parsed = new URL(url, typeof window === "undefined" ? "https://verdictproof.vercel.app" : window.location.origin);
+    const path = parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/$/, "");
+    const compactPath = path.length > 24 ? `${path.slice(0, 21)}...` : path;
+    return `${parsed.hostname}${compactPath}`;
+  } catch {
+    return url.length > 28 ? `${url.slice(0, 25)}...` : url;
+  }
+}
+
+function contractShortLabel() {
+  const address = explorerContract().split("/").filter(Boolean).pop() ?? "Bradbury contract";
+  return address.startsWith("0x") ? shortAddress(address) : address;
+}
+
 type StoredCampaign = Omit<Campaign, "rewardPool" | "rewardPerApproved" | "stakeRequired"> & {
   rewardPool: string;
   rewardPerApproved: string;
@@ -1219,18 +1235,26 @@ function ReviewHistory({ submissions }: { submissions: Submission[] }) {
               </div>
               <div className="history-links">
                 <span>{submission.riskFlags}</span>
-                <a href={submission.transactionUrl} target="_blank" rel="noreferrer">
-                  Proof / tx note
-                  <ExternalLink size={12} />
-                </a>
-                <a href={submissionResultHref(submission)}>
-                  AI result
-                  <ExternalLink size={12} />
-                </a>
-                <a href={explorerContract()} target="_blank" rel="noreferrer">
-                  Contract
-                  <ExternalLink size={12} />
-                </a>
+                <LinkChip
+                  href={submission.transactionUrl}
+                  label="Proof / tx note"
+                  detail={compactUrlLabel(submission.transactionUrl)}
+                  title="Open proof or transaction evidence"
+                  external
+                />
+                <LinkChip
+                  href={submissionResultHref(submission)}
+                  label="AI result"
+                  detail={`Dashboard #${submission.campaignId}-${submission.submissionId}`}
+                  title="Open this AI review result in the dashboard"
+                />
+                <LinkChip
+                  href={explorerContract()}
+                  label="Contract"
+                  detail={contractShortLabel()}
+                  title="Open VerdictProof contract on Bradbury"
+                  external
+                />
               </div>
             </article>
           ))}
@@ -1545,21 +1569,53 @@ function SubmissionRow({
   );
 }
 
+function LinkChip({
+  href,
+  label,
+  detail,
+  title,
+  external = false
+}: {
+  href: string;
+  label: string;
+  detail?: string;
+  title?: string;
+  external?: boolean;
+}) {
+  return (
+    <a href={href} target={external ? "_blank" : undefined} rel={external ? "noreferrer" : undefined} title={title}>
+      <span className="chip-copy">
+        <strong>{label}</strong>
+        {detail ? <small>{detail}</small> : null}
+      </span>
+      <ExternalLink size={12} />
+    </a>
+  );
+}
+
 function SubmissionLinks({ submission }: { submission: Submission }) {
   return (
     <div className="submission-links">
-      <a href={submission.transactionUrl} target="_blank" rel="noreferrer" title="Open proof or transaction evidence">
-        Proof / tx note
-        <ExternalLink size={12} />
-      </a>
-      <a href={submissionResultHref(submission)} title="Open the AI review result in the dashboard">
-        AI result
-        <ExternalLink size={12} />
-      </a>
-      <a href={explorerContract()} target="_blank" rel="noreferrer" title="Open VerdictProof contract on Bradbury">
-        Contract
-        <ExternalLink size={12} />
-      </a>
+      <LinkChip
+        href={submission.transactionUrl}
+        label="Proof / tx note"
+        detail={compactUrlLabel(submission.transactionUrl)}
+        title="Open proof or transaction evidence"
+        external
+      />
+      <LinkChip
+        href={submissionResultHref(submission)}
+        label="AI result"
+        detail={`Dashboard #${submission.campaignId}-${submission.submissionId}`}
+        title="Open the AI review result in the dashboard"
+      />
+      <LinkChip
+        href={explorerContract()}
+        label="Contract"
+        detail={contractShortLabel()}
+        title="Open VerdictProof contract on Bradbury"
+        external
+      />
     </div>
   );
 }

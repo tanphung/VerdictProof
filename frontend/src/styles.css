@@ -1266,7 +1266,7 @@ textarea:focus {
 .history-links span,
 .history-links a,
 .submission-links a {
-  min-height: 28px;
+  min-height: 30px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1278,6 +1278,35 @@ textarea:focus {
   font-size: 12px;
   font-weight: 750;
   text-decoration: none;
+}
+
+.history-links a,
+.submission-links a {
+  min-height: 42px;
+  padding: 6px 10px 6px 12px;
+}
+
+.chip-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.05;
+}
+
+.chip-copy strong {
+  color: #eefaff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.chip-copy small {
+  max-width: 170px;
+  overflow: hidden;
+  color: #94cadd;
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mini-review-detail {
