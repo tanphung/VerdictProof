@@ -1,0 +1,14 @@
+paths:
+  contracts: "contracts"
+
+environment: .env
+
+networks:
+  default: studionet
+
+  localnet: {}
+  studionet: {}
+  testnet_bradbury:
+    url: "https://rpc-bradbury.genlayer.com"
+    accounts:
+      - "${ACCOUNT_PRIVATE_KEY}"
