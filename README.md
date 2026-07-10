@@ -8,6 +8,12 @@ Testers stake GEN, use the product, submit proof and written feedback, and
 GenLayer AI validators decide whether the tester should receive a reward or
 lose their stake.
 
+## Live Deployment
+
+- App: https://verdictproof.vercel.app/
+- Bradbury contract: `0x2bba32a793c013BeB8742Dc17954D4dF861e5a1c`
+- Explorer: https://explorer-bradbury.genlayer.com/address/0x2bba32a793c013BeB8742Dc17954D4dF861e5a1c
+
 ```text
 Project funds campaign
 -> Tester stakes GEN

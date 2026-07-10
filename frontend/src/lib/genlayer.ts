@@ -2,8 +2,21 @@ import { abi as genlayerAbi, createAccount, createClient, generatePrivateKey } f
 import { testnetBradbury } from "genlayer-js/chains";
 import { createPublicClient, encodeFunctionData, http, parseEventLogs } from "viem";
 
-export const CONTRACT_ADDRESS = import.meta.env.VITE_SIGNALSTAKE_CONTRACT_ADDRESS || "";
-export const EXPLORER = import.meta.env.VITE_GENLAYER_EXPLORER || "https://explorer-bradbury.genlayer.com";
+declare global {
+  interface Window {
+    __VERDICTPROOF_CONFIG__?: {
+      contractAddress?: string;
+      chain?: string;
+      explorer?: string;
+    };
+  }
+}
+
+const runtimeConfig = typeof window === "undefined" ? undefined : window.__VERDICTPROOF_CONFIG__;
+
+export const CONTRACT_ADDRESS = runtimeConfig?.contractAddress || import.meta.env.VITE_SIGNALSTAKE_CONTRACT_ADDRESS || "";
+export const EXPLORER =
+  runtimeConfig?.explorer || import.meta.env.VITE_GENLAYER_EXPLORER || "https://explorer-bradbury.genlayer.com";
 export const CHAIN = testnetBradbury;
 
 export type Eip1193Provider = {
