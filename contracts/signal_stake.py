@@ -32,6 +32,10 @@ ONE_GEN_ATTO = 10**18
 MIN_POOL_ATTO = 10**17
 MAX_POOL_ATTO = 10**18
 DEFAULT_SCORE_TOLERANCE = 12
+PROOF_SCORE_TOLERANCE = 8
+FEEDBACK_SCORE_TOLERANCE = 6
+INSIGHT_SCORE_TOLERANCE = 5
+ORIGINALITY_SCORE_TOLERANCE = 4
 
 MAX_TITLE_CHARS = 120
 MAX_URL_CHARS = 500
@@ -99,7 +103,7 @@ def _parse_bool(raw: typing.Any) -> bool:
 
 def _validate_payable_value(declared_atto: int, label: str) -> None:
     observed_atto = int(gl.message.value)
-    if observed_atto != 0 and observed_atto != declared_atto:
+    if observed_atto != declared_atto:
         raise gl.vm.UserError(f"{ERR_EXPECTED} {label} value mismatch")
 
 
@@ -149,13 +153,13 @@ def _normalize_review(raw: typing.Any, minimum_score: int, reward_per_approved: 
     if not isinstance(raw, dict):
         return _reject_review(0, "Rejected because AI review did not return a structured result.")
 
-    score = _parse_int(raw.get("score"), 0, 100)
-    usage_valid = _parse_bool(raw.get("usage_valid"))
-    approved = _parse_bool(raw.get("approved")) and usage_valid and score >= minimum_score
     proof_score = _parse_int(raw.get("proof_score"), 0, 40)
     feedback_score = _parse_int(raw.get("feedback_score"), 0, 25)
     insight_score = _parse_int(raw.get("insight_score"), 0, 20)
     originality_score = _parse_int(raw.get("originality_score"), 0, 15)
+    score = proof_score + feedback_score + insight_score + originality_score
+    usage_valid = _parse_bool(raw.get("usage_valid"))
+    approved = usage_valid and score >= minimum_score
     quality = str(raw.get("feedback_quality", "MEDIUM")).upper()[:20]
     if quality not in ("LOW", "MEDIUM", "HIGH"):
         quality = "MEDIUM"
@@ -189,7 +193,11 @@ def _normalize_review(raw: typing.Any, minimum_score: int, reward_per_approved: 
     }
 
 
-def _valid_review_payload(raw: typing.Any, minimum_score: int) -> bool:
+def _valid_review_payload(
+    raw: typing.Any,
+    minimum_score: int,
+    reward_per_approved: int,
+) -> bool:
     if not isinstance(raw, dict):
         return False
     try:
@@ -197,20 +205,61 @@ def _valid_review_payload(raw: typing.Any, minimum_score: int) -> bool:
         quality = str(raw.get("feedback_quality", "")).upper()
         reason = _clean_text(raw.get("reason_summary", ""), MAX_REASON_CHARS)
         approved = _parse_bool(raw.get("approved"))
-        _parse_int(raw.get("proof_score"), 0, 40)
-        _parse_int(raw.get("feedback_score"), 0, 25)
-        _parse_int(raw.get("insight_score"), 0, 20)
-        _parse_int(raw.get("originality_score"), 0, 15)
+        proof_score = _parse_int(raw.get("proof_score"), 0, 40)
+        feedback_score = _parse_int(raw.get("feedback_score"), 0, 25)
+        insight_score = _parse_int(raw.get("insight_score"), 0, 20)
+        originality_score = _parse_int(raw.get("originality_score"), 0, 15)
         if quality not in ("LOW", "MEDIUM", "HIGH"):
             return False
         if not reason:
             return False
         usage_valid = _parse_bool(raw.get("usage_valid"))
-        if approved and (not usage_valid or score < minimum_score):
+        if score != proof_score + feedback_score + insight_score + originality_score:
+            return False
+        expected_approved = usage_valid and score >= minimum_score
+        if approved != expected_approved:
+            return False
+        expected_reward = reward_per_approved if expected_approved else 0
+        if int(raw.get("reward_amount", "0")) != expected_reward:
             return False
         return True
     except Exception:
         return False
+
+
+def _reviews_equivalent(
+    leader: typing.Any,
+    validator: typing.Any,
+    minimum_score: int,
+    reward_per_approved: int,
+) -> bool:
+    if not _valid_review_payload(leader, minimum_score, reward_per_approved):
+        return False
+    if not _valid_review_payload(validator, minimum_score, reward_per_approved):
+        return False
+
+    if _parse_bool(leader.get("usage_valid")) != _parse_bool(validator.get("usage_valid")):
+        return False
+    if _parse_bool(leader.get("approved")) != _parse_bool(validator.get("approved")):
+        return False
+
+    comparisons = (
+        ("score", DEFAULT_SCORE_TOLERANCE),
+        ("proof_score", PROOF_SCORE_TOLERANCE),
+        ("feedback_score", FEEDBACK_SCORE_TOLERANCE),
+        ("insight_score", INSIGHT_SCORE_TOLERANCE),
+        ("originality_score", ORIGINALITY_SCORE_TOLERANCE),
+    )
+    for field, tolerance in comparisons:
+        left = _parse_int(leader.get(field), 0, 100)
+        right = _parse_int(validator.get(field), 0, 100)
+        if abs(left - right) > tolerance:
+            return False
+
+    quality_rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+    leader_quality = quality_rank.get(str(leader.get("feedback_quality", "")).upper(), -10)
+    validator_quality = quality_rank.get(str(validator.get("feedback_quality", "")).upper(), 10)
+    return abs(leader_quality - validator_quality) <= 1
 
 
 def _score_submission(
@@ -512,17 +561,16 @@ class VerdictProof(gl.Contract):
         def validator_fn(leaders_res: gl.vm.Result) -> bool:
             if not isinstance(leaders_res, gl.vm.Return):
                 return _handle_leader_error(leaders_res, leader_fn)
-            payload = leaders_res.calldata
-            if not _valid_review_payload(payload, minimum_score):
+            try:
+                validator_result = leader_fn()
+            except Exception:
                 return False
-            score = _parse_int(payload.get("score"), 0, 100)
-            usage_valid = _parse_bool(payload.get("usage_valid"))
-            approved = _parse_bool(payload.get("approved"))
-            if approved != (usage_valid and score >= minimum_score):
-                return False
-            if int(payload.get("reward_amount", "0")) < 0:
-                return False
-            return True
+            return _reviews_equivalent(
+                leaders_res.calldata,
+                validator_result,
+                minimum_score,
+                reward_per_approved,
+            )
 
         result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
         result = _normalize_review(result, minimum_score, reward_per_approved)

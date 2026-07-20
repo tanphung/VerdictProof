@@ -91,3 +91,42 @@ def test_submit_proof_success_and_exact_stake_required():
     submissions = contract.list_campaign_submissions(args=[1]).call()
     assert submissions["count"] == 1
     assert submissions["submissions"][0]["status"] == "PENDING"
+
+
+def test_ai_review_reaches_consensus_on_public_evidence():
+    factory = get_contract_factory(contract_name="VerdictProof")
+    contract = factory.deploy(args=[])
+
+    create = contract.create_campaign(
+        args=[
+            "Verify Public Product Evidence",
+            "https://verdictproof.vercel.app/",
+            "Inspect the public app and submit evidence of one completed product flow.",
+            "A public transaction or evidence URL, a public result page, and specific feedback.",
+            POOL,
+            REWARD,
+            STAKE,
+            70,
+        ]
+    ).transact(value=POOL)
+    assert tx_execution_succeeded(create)
+
+    submit = contract.submit_proof(
+        args=[
+            1,
+            STAKE,
+            "https://example.com/",
+            "https://www.iana.org/help/example-domains",
+            "The submitted pages do not prove a completed VerdictProof campaign flow, so this evidence should be rejected.",
+        ]
+    ).transact(value=STAKE)
+    assert tx_execution_succeeded(submit)
+
+    review = contract.evaluate_submission(args=[1]).transact()
+    assert tx_execution_succeeded(review)
+
+    result = contract.get_submission(args=[1]).call()
+    assert result["status"] in ("APPROVED", "REJECTED")
+    assert result["status"] != "PENDING"
+    assert result["reason_summary"]
+    assert result["evidence_summary"]

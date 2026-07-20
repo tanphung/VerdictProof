@@ -15,7 +15,6 @@ import {
   Loader2,
   Network,
   Plus,
-  Radio,
   Sparkles,
   Trophy,
   Wallet,
@@ -869,29 +868,31 @@ function App() {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-mark">
-            <Sparkles size={20} />
+          <div className="brand-mark" aria-hidden="true">
+            <img src="/assets/verdictproof-mark.svg" alt="" />
           </div>
           <div>
             <h1>VerdictProof</h1>
-            <p>Evidence-backed product testing, judged by GenLayer consensus.</p>
+            <p>Evidence markets, settled by consensus.</p>
           </div>
         </div>
         <div className="topbar-actions">
-          <button className={`ghost-link ${activeView === "campaigns" ? "active" : ""}`} onClick={() => setActiveView("campaigns")}>
-            Campaigns
-          </button>
-          <button className={`ghost-link ${activeView === "review" ? "active" : ""}`} onClick={() => setActiveView("review")}>
-            Review
-          </button>
-          <button className={`ghost-link ${activeView === "dashboard" ? "active" : ""}`} onClick={() => setActiveView("dashboard")}>
-            Dashboard
-          </button>
-          <button className={`ghost-link ${activeView === "claims" ? "active" : ""}`} onClick={() => setActiveView("claims")}>
-            Claims
-          </button>
-          <a className="ghost-link" href={explorerContract()} target="_blank" rel="noreferrer">
-            Explorer <ExternalLink size={14} />
+          <nav className="primary-nav" aria-label="Primary navigation">
+            <button className={`ghost-link ${activeView === "campaigns" ? "active" : ""}`} onClick={() => setActiveView("campaigns")}>
+              Campaigns
+            </button>
+            <button className={`ghost-link ${activeView === "review" ? "active" : ""}`} onClick={() => setActiveView("review")}>
+              Review
+            </button>
+            <button className={`ghost-link ${activeView === "dashboard" ? "active" : ""}`} onClick={() => setActiveView("dashboard")}>
+              Dashboard
+            </button>
+            <button className={`ghost-link ${activeView === "claims" ? "active" : ""}`} onClick={() => setActiveView("claims")}>
+              Claims
+            </button>
+          </nav>
+          <a className="explorer-link" href={explorerContract()} target="_blank" rel="noreferrer">
+            Explorer <ExternalLink size={13} />
           </a>
           {walletAddress ? (
             <div className="wallet-inline">
@@ -916,54 +917,42 @@ function App() {
         {activeView === "campaigns" ? (
           <>
         <section className="cinematic-hero">
-          <div className="hero-visual" aria-hidden="true">
-            <div className="signal-grid" />
-            <div className="scanline" />
-            <div className="signal-lane lane-a" />
-            <div className="signal-lane lane-b" />
-            <div className="signal-lane lane-c" />
-            <div className="consensus-lens">
-              <div className="lens-ring ring-one" />
-              <div className="lens-ring ring-two" />
-              <div className="lens-core" />
-              <div className="lens-tick tick-a" />
-              <div className="lens-tick tick-b" />
-              <div className="lens-tick tick-c" />
-            </div>
-            <div className="signal-beam beam-one" />
-            <div className="signal-beam beam-two" />
-          </div>
+          <img
+            className="hero-art"
+            src="/assets/verdict-prism.png"
+            alt=""
+            aria-hidden="true"
+          />
+          <div className="hero-scrim" aria-hidden="true" />
           <div className="hero-content">
-            <div className="eyebrow hero-eyebrow">
-              <Radio size={16} />
-              Product testing campaigns settled by verifiable AI consensus
+            <div className="hero-eyebrow">
+              <span className="live-dot" />
+              Live on GenLayer Bradbury
             </div>
-            <h2>Stake GEN on real product evidence. Let GenLayer turn proof into a verdict.</h2>
+            <h2>Turn product evidence into an on-chain verdict.</h2>
             <p>
-              VerdictProof turns product QA into a live reward protocol: projects fund campaigns, testers stake
-              GEN, proof links become evidence, and GenLayer decides who earned the payout.
+              Fund a testing brief. Testers stake GEN and submit public evidence. GenLayer validators inspect the
+              proof, score its quality, and settle the reward.
             </p>
             <div className="hero-actions">
               <button className="primary-button" onClick={() => setShowCreate(true)}>
                 <Plus size={16} />
                 Create Campaign
               </button>
-              <a className="secondary-button" href="#review">
-                <Sparkles size={15} />
-                Review a Submission
-              </a>
+              <button className="secondary-button" onClick={() => setActiveView("dashboard")}>
+                View verdicts
+                <ArrowRight size={15} />
+              </button>
             </div>
-            <div className="hero-proofbar">
-              <span>Campaign</span>
-              <strong>Stake</strong>
-              <strong>Proof</strong>
-              <strong>AI Review</strong>
-              <strong>Reward / Slash</strong>
+            <div className="hero-assurance">
+              <span><CheckCircle2 size={14} /> Real GEN escrow</span>
+              <span><FileSearch size={14} /> Public evidence</span>
+              <span><BrainCircuit size={14} /> Validator consensus</span>
             </div>
           </div>
         </section>
 
-        <section className="stats-grid">
+        <section className="stats-grid protocol-stats">
           {stats.map((stat) => {
             const Icon = stat.icon;
             return (
@@ -976,22 +965,7 @@ function App() {
           })}
         </section>
 
-        <section className="signal-health">
-          <div>
-            <span>Approved signal</span>
-            <strong>{approvedSubmissions}</strong>
-          </div>
-          <div>
-            <span>Slashed noise</span>
-            <strong>{rejectedSubmissions}</strong>
-          </div>
-          <div>
-            <span>Contract mode</span>
-            <strong>{liveMode ? "Bradbury live" : "Contract required"}</strong>
-          </div>
-        </section>
-
-        <div className="notice-row">
+        <div className="notice-row protocol-notice">
           <p>{notice}</p>
           <div className="notice-actions">
             <TxInlineLinks tx={latestTx} />
@@ -1002,26 +976,12 @@ function App() {
           </div>
         </div>
 
-        {!walletAddress ? (
-          <div className="wallet-status">
-            <div>
-              <strong>Wallet not connected</strong>
-              <p>
-                {liveMode
-                  ? "Connect an injected wallet on Bradbury to create campaigns, stake GEN, and submit live proof."
-                  : "Set the Bradbury contract address to enable live campaign reads and writes."}
-              </p>
-            </div>
-            <button className="secondary-button" onClick={connectWallet}>
-              <Wallet size={15} />
-              Connect Wallet
-            </button>
-          </div>
-        ) : null}
-
         <div className="section-kicker" id="campaigns">
-          <span>Campaign board</span>
-          <h3>Campaigns for real usage proof.</h3>
+          <div>
+            <span>Evidence market</span>
+            <h3>Open campaigns</h3>
+          </div>
+          <p>Choose a live brief, complete the product task, and stake behind evidence you can defend.</p>
         </div>
 
         <div className="campaign-command-grid">

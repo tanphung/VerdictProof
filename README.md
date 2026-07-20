@@ -51,6 +51,16 @@ inspect real evidence and compare it to the campaign:
 - the written feedback's specificity, usefulness, and originality;
 - spam or prompt-injection risk in user-submitted text.
 
+The leader and every validator independently render the same public evidence
+and run the same scoring rubric. The validator compares usage validity,
+approval, total score, and each rubric component with explicit tolerances.
+A correctly shaped JSON response is rejected when its substantive decision
+does not agree with the validator's independent review.
+
+Campaign funding and tester stake are also enforced against the exact
+`gl.message.value` received by each payable method. Declared pool or stake
+amounts cannot create unbacked accounting entries.
+
 Each reviewed submission stores the score, approval status, evidence summary,
 recommendation, and risk flags so the frontend can show a readable verdict
 history instead of only a raw transaction.

@@ -49,6 +49,10 @@ def approve_demo_submission(contract, direct_vm, direct_alice):
                 "score": 90,
                 "usage_valid": True,
                 "feedback_quality": "HIGH",
+                "proof_score": 38,
+                "feedback_score": 23,
+                "insight_score": 16,
+                "originality_score": 13,
                 "approved": True,
                 "reason_summary": "Good signal.",
             }
@@ -154,32 +158,33 @@ def test_create_campaign_rejects_reward_above_pool_and_bad_score(direct_vm, dire
     direct_vm.value = 0
 
 
-def test_declared_amounts_work_when_message_value_is_zero(direct_vm, direct_deploy, direct_alice):
+def test_payable_methods_reject_zero_message_value(direct_vm, direct_deploy, direct_alice):
     contract = direct_deploy(CONTRACT)
 
     direct_vm.value = 0
-    cid = contract.create_campaign(
-        "Bradbury Safe Campaign",
-        "https://example.com/bradbury-safe",
-        "Complete a live product test and submit concrete feedback.",
-        "Transaction URL, app result URL, written feedback.",
-        POOL,
-        REWARD,
-        STAKE,
-        75,
-    )
+    with direct_vm.expect_revert("campaign pool value mismatch"):
+        contract.create_campaign(
+            "Unfunded Campaign",
+            "https://example.com/unfunded",
+            "Complete a live product test and submit concrete feedback.",
+            "Transaction URL, app result URL, written feedback.",
+            POOL,
+            REWARD,
+            STAKE,
+            75,
+        )
 
+    cid = create_demo_campaign(contract, direct_vm)
     direct_vm.sender = direct_alice
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        "https://example.com/tx/0xbradbury",
-        "https://example.com/result/bradbury",
-        "I completed the flow and found the confirmation copy unclear after wallet signing.",
-    )
-
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL)
-    assert contract.get_submission(sid)["stake_amount"] == str(STAKE)
+    direct_vm.value = 0
+    with direct_vm.expect_revert("tester stake value mismatch"):
+        contract.submit_proof(
+            cid,
+            STAKE,
+            "https://example.com/tx/0xunfunded",
+            "https://example.com/result/unfunded",
+            "I completed the flow and found the confirmation copy unclear after wallet signing.",
+        )
 
 
 def test_observed_native_value_must_match_declared_amount(direct_vm, direct_deploy, direct_alice):
@@ -265,7 +270,7 @@ def test_submit_requires_exact_stake(direct_vm, direct_deploy, direct_alice):
 
     direct_vm.sender = direct_alice
     direct_vm.value = 0
-    with direct_vm.expect_revert("exact tester stake"):
+    with direct_vm.expect_revert("tester stake value mismatch"):
         contract.submit_proof(
             cid,
             STAKE - 1,
@@ -334,8 +339,10 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
                 "score": 87,
                 "usage_valid": True,
                 "feedback_quality": "HIGH",
-                "product_insight": 18,
-                "originality": 14,
+                "proof_score": 36,
+                "feedback_score": 22,
+                "insight_score": 16,
+                "originality_score": 13,
                 "approved": True,
                 "reason_summary": "The tester completed the flow and gave specific confirmation UX feedback.",
             }
@@ -383,8 +390,10 @@ def test_evaluate_rejects_generic_feedback_and_slashes_stake(direct_vm, direct_d
                 "score": 32,
                 "usage_valid": False,
                 "feedback_quality": "LOW",
-                "product_insight": 2,
-                "originality": 1,
+                "proof_score": 8,
+                "feedback_score": 10,
+                "insight_score": 8,
+                "originality_score": 6,
                 "approved": False,
                 "reason_summary": "The feedback is generic and proof does not demonstrate usage.",
             }
@@ -421,8 +430,10 @@ def test_evaluate_rejects_high_score_when_usage_proof_invalid(direct_vm, direct_
                 "score": 82,
                 "usage_valid": False,
                 "feedback_quality": "HIGH",
-                "product_insight": 18,
-                "originality": 12,
+                "proof_score": 35,
+                "feedback_score": 22,
+                "insight_score": 15,
+                "originality_score": 10,
                 "approved": False,
                 "reason_summary": "Feedback is useful, but the proof does not validate real product usage.",
             }
@@ -502,7 +513,19 @@ def test_rejected_submission_cannot_claim(direct_vm, direct_deploy, direct_alice
     direct_vm.mock_web(r".*", {"status": 200, "body": "Weak proof."})
     direct_vm.mock_llm(
         r".*Rubric, total 100.*",
-        json.dumps({"score": 20, "usage_valid": False, "feedback_quality": "LOW", "approved": False, "reason_summary": "Low quality."}),
+        json.dumps(
+            {
+                "score": 20,
+                "usage_valid": False,
+                "feedback_quality": "LOW",
+                "proof_score": 5,
+                "feedback_score": 7,
+                "insight_score": 5,
+                "originality_score": 3,
+                "approved": False,
+                "reason_summary": "Low quality.",
+            }
+        ),
     )
     contract.evaluate_submission(sid)
 
