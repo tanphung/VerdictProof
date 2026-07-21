@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $EnvPath = Join-Path $ProjectRoot ".env"
 $FrontendEnvPath = Join-Path $ProjectRoot "frontend\.env"
-$ContractPath = "contracts/signal_stake.py"
+$ContractPath = "contracts/verdict_proof.py"
 
 function Read-LocalEnv {
   param([string]$Path)
@@ -114,8 +114,8 @@ $genlayerCommand = (Get-Command "genlayer.cmd" -ErrorAction Stop).Source
 $envValues = Read-LocalEnv -Path $EnvPath
 $privateKey = $envValues["ACCOUNT_PRIVATE_KEY"]
 $expectedWallet = $envValues["EXPECTED_WALLET_ADDRESS"]
-$accountName = $envValues["SIGNALSTAKE_ACCOUNT_NAME"]
-$accountPassword = $envValues["SIGNALSTAKE_KEYSTORE_PASSWORD"]
+$accountName = $envValues["VERDICTPROOF_ACCOUNT_NAME"]
+$accountPassword = $envValues["VERDICTPROOF_KEYSTORE_PASSWORD"]
 
 if (-not $accountName) {
   $accountName = "verdictproof-bradbury"
@@ -188,8 +188,8 @@ if (-not $contractAddress) {
 }
 
 $frontendEnv = @(
-  "VITE_SIGNALSTAKE_CONTRACT_ADDRESS=$contractAddress",
-  "VITE_SIGNALSTAKE_CHAIN=bradbury",
+  "VITE_VERDICTPROOF_CONTRACT_ADDRESS=$contractAddress",
+  "VITE_VERDICTPROOF_CHAIN=bradbury",
   "VITE_GENLAYER_EXPLORER=https://explorer-bradbury.genlayer.com"
 )
 

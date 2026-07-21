@@ -5,20 +5,20 @@ real product evidence becomes an on-chain reward or slash verdict.
 
 Projects create product testing campaigns and fund a small GEN reward pool.
 Testers stake GEN, use the product, submit proof and written feedback, and
-GenLayer AI validators decide whether the tester should receive a reward or
-lose their stake.
+GenLayer validator consensus verifies the evidence before settling a reward or
+slash outcome.
 
 ## Live Deployment
 
 - App: https://verdictproof.vercel.app/
-- Bradbury contract: `0x2bba32a793c013BeB8742Dc17954D4dF861e5a1c`
-- Explorer: https://explorer-bradbury.genlayer.com/address/0x2bba32a793c013BeB8742Dc17954D4dF861e5a1c
+- Bradbury contract: `0xa7eBc3913B9d221fDAa9C3Eb5738D2FC26a6A524`
+- Explorer: https://explorer-bradbury.genlayer.com/address/0xa7eBc3913B9d221fDAa9C3Eb5738D2FC26a6A524
 
 ```text
 Project funds campaign
 -> Tester stakes GEN
 -> Tester submits proof + feedback
--> GenLayer AI reviews usage quality
+-> GenLayer validators verify the evidence
 -> Reward or slash
 ```
 
@@ -28,7 +28,7 @@ VerdictProof relies on a real Intelligent Contract because the main workflow
 requires subjective, evidence-based judgment:
 
 - read product and proof URLs;
-- understand whether a tester likely used the product;
+- verify whether the tester completed the requested task;
 - judge whether feedback is specific, useful, and original;
 - settle a reward/slash outcome on-chain.
 
@@ -47,7 +47,10 @@ inspect real evidence and compare it to the campaign:
 
 - the campaign product URL and task instruction;
 - the tester's proof or transaction URL;
-- the submitted app/result URL;
+- the submitted outcome evidence URL;
+- whether the transaction reached a successful execution result;
+- whether the transaction sender matches the submitting tester wallet;
+- whether transaction and outcome evidence prove the requested task;
 - the written feedback's specificity, usefulness, and originality;
 - spam or prompt-injection risk in user-submitted text.
 
@@ -61,14 +64,15 @@ Campaign funding and tester stake are also enforced against the exact
 `gl.message.value` received by each payable method. Declared pool or stake
 amounts cannot create unbacked accounting entries.
 
-Each reviewed submission stores the score, approval status, evidence summary,
-recommendation, and risk flags so the frontend can show a readable verdict
-history instead of only a raw transaction.
+Each reviewed submission stores the three evidence gates, four rubric scores,
+approval status, evidence summary, recommendation, and risk flags. The frontend
+therefore shows why a verdict settled instead of only displaying an opaque AI
+score or raw transaction.
 
 ## Project Structure
 
 ```text
-contracts/signal_stake.py           Intelligent Contract
+contracts/verdict_proof.py          Intelligent Contract
 tests/direct/                       Fast direct-mode contract tests
 tests/integration/                  GenLayer environment smoke tests
 frontend/                           Vite React dashboard
@@ -97,13 +101,13 @@ https://your-product.example/checkout
 Example task:
 
 ```text
-Complete checkout, capture the transaction/result URL, and report one concrete wallet confirmation issue.
+Complete checkout, capture the transaction and outcome evidence URLs, and report one concrete wallet confirmation issue.
 ```
 
 Required proof:
 
 ```text
-Transaction URL, app result URL, written feedback.
+Transaction URL, outcome evidence URL, written feedback.
 ```
 
 Default campaign values:
@@ -139,8 +143,12 @@ Core methods:
 Approval rule:
 
 ```text
-score >= campaign.minimum_score -> APPROVED
-score < campaign.minimum_score  -> REJECTED
+transaction execution succeeded
+AND transaction sender matches tester
+AND campaign task is proven by public evidence
+AND rubric score >= campaign.minimum_score -> APPROVED
+
+Any failed evidence gate or insufficient score -> REJECTED
 ```
 
 Rejected tester stake returns to the campaign reward pool. Approved testers
@@ -166,7 +174,7 @@ npm install
 Lint the contract:
 
 ```bash
-genvm-lint check contracts/signal_stake.py
+genvm-lint check contracts/verdict_proof.py
 ```
 
 Run direct tests:
@@ -180,6 +188,20 @@ Run integration smoke tests:
 ```bash
 gltest tests/integration/ -v -s --network studionet
 ```
+
+Run the real multi-wallet Bradbury verification after deploying a clean
+contract and funding the three local gitignored test accounts:
+
+```bash
+cd frontend
+npm run verify:bradbury
+```
+
+The verification uses distinct sponsor, approved-tester, and rejected-tester
+wallets. It requires every transaction to reach `ACCEPTED` or `FINALIZED` with
+`FINISHED_WITH_RETURN`, verifies one reward claim and one slash, and writes a
+public transaction report to `deploy/latest-bradbury-verification.json` without
+including private keys.
 
 Run the frontend:
 
@@ -200,13 +222,13 @@ npm run build
 Copy `frontend/.env.example` to `frontend/.env` after deployment:
 
 ```bash
-VITE_SIGNALSTAKE_CONTRACT_ADDRESS=<deployed-contract-address>
-VITE_SIGNALSTAKE_CHAIN=bradbury
+VITE_VERDICTPROOF_CONTRACT_ADDRESS=<deployed-contract-address>
+VITE_VERDICTPROOF_CHAIN=bradbury
 VITE_GENLAYER_EXPLORER=https://explorer-bradbury.genlayer.com
 ```
 
-The `VITE_SIGNALSTAKE_*` names are retained as legacy configuration keys so
-existing deployments and smoke scripts keep working after the product rename.
+The contract address is injected at build time and is never hard-coded in the
+public runtime configuration file.
 
 Without a contract address, the frontend shows a setup-required state. It does
 not create local campaigns or fake submissions.

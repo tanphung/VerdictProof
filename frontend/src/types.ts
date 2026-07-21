@@ -31,6 +31,15 @@ export type Submission = {
   score: number;
   approved: boolean;
   rewardAmount: bigint;
+  transactionSuccess: boolean;
+  identityMatch: boolean;
+  taskCompleted: boolean;
+  usageValid: boolean;
+  feedbackQuality: string;
+  proofScore: number;
+  feedbackScore: number;
+  insightScore: number;
+  originalityScore: number;
   reasonSummary: string;
   evidenceSummary: string;
   improvementRecommendation: string;

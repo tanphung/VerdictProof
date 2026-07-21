@@ -31,18 +31,18 @@ STATUS_CLAIMED = "CLAIMED"
 ONE_GEN_ATTO = 10**18
 MIN_POOL_ATTO = 10**17
 MAX_POOL_ATTO = 10**18
-DEFAULT_SCORE_TOLERANCE = 12
-PROOF_SCORE_TOLERANCE = 8
-FEEDBACK_SCORE_TOLERANCE = 6
-INSIGHT_SCORE_TOLERANCE = 5
-ORIGINALITY_SCORE_TOLERANCE = 4
+DEFAULT_SCORE_TOLERANCE = 15
+PROOF_SCORE_TOLERANCE = 10
+FEEDBACK_SCORE_TOLERANCE = 8
+INSIGHT_SCORE_TOLERANCE = 7
+ORIGINALITY_SCORE_TOLERANCE = 6
 
 MAX_TITLE_CHARS = 120
 MAX_URL_CHARS = 500
 MAX_TEXT_CHARS = 2400
 MAX_REASON_CHARS = 260
 MAX_REVIEW_DETAIL_CHARS = 420
-MAX_RENDER_CHARS = 5000
+MAX_RENDER_CHARS = 3600
 
 INJECTION_TOKENS = (
     "ignore previous",
@@ -134,6 +134,9 @@ def _reject_review(score: int, reason: str) -> dict:
     return {
         "approved": False,
         "score": max(0, min(100, score)),
+        "transaction_success": False,
+        "identity_match": False,
+        "task_completed": False,
         "usage_valid": False,
         "feedback_quality": "LOW",
         "proof_score": 0,
@@ -158,7 +161,10 @@ def _normalize_review(raw: typing.Any, minimum_score: int, reward_per_approved: 
     insight_score = _parse_int(raw.get("insight_score"), 0, 20)
     originality_score = _parse_int(raw.get("originality_score"), 0, 15)
     score = proof_score + feedback_score + insight_score + originality_score
-    usage_valid = _parse_bool(raw.get("usage_valid"))
+    transaction_success = _parse_bool(raw.get("transaction_success"))
+    identity_match = _parse_bool(raw.get("identity_match"))
+    task_completed = _parse_bool(raw.get("task_completed"))
+    usage_valid = transaction_success and identity_match and task_completed
     approved = usage_valid and score >= minimum_score
     quality = str(raw.get("feedback_quality", "MEDIUM")).upper()[:20]
     if quality not in ("LOW", "MEDIUM", "HIGH"):
@@ -178,6 +184,9 @@ def _normalize_review(raw: typing.Any, minimum_score: int, reward_per_approved: 
     return {
         "approved": approved,
         "score": score,
+        "transaction_success": transaction_success,
+        "identity_match": identity_match,
+        "task_completed": task_completed,
         "usage_valid": usage_valid,
         "feedback_quality": quality,
         "proof_score": proof_score,
@@ -214,6 +223,12 @@ def _valid_review_payload(
         if not reason:
             return False
         usage_valid = _parse_bool(raw.get("usage_valid"))
+        transaction_success = _parse_bool(raw.get("transaction_success"))
+        identity_match = _parse_bool(raw.get("identity_match"))
+        task_completed = _parse_bool(raw.get("task_completed"))
+        expected_usage_valid = transaction_success and identity_match and task_completed
+        if usage_valid != expected_usage_valid:
+            return False
         if score != proof_score + feedback_score + insight_score + originality_score:
             return False
         expected_approved = usage_valid and score >= minimum_score
@@ -242,6 +257,9 @@ def _reviews_equivalent(
         return False
     if _parse_bool(leader.get("approved")) != _parse_bool(validator.get("approved")):
         return False
+    for field in ("transaction_success", "identity_match", "task_completed"):
+        if _parse_bool(leader.get(field)) != _parse_bool(validator.get(field)):
+            return False
 
     comparisons = (
         ("score", DEFAULT_SCORE_TOLERANCE),
@@ -269,15 +287,14 @@ def _score_submission(
     transaction_url: str,
     app_result_url: str,
     feedback_text: str,
+    tester_address: str,
     minimum_score: int,
     reward_per_approved: int,
 ) -> dict:
-    product_text = _render_text(product_url)
     transaction_text = _render_text(transaction_url)
     app_result_text = _render_text(app_result_url)
     if (
-        product_text.startswith(UNAVAILABLE_PREFIX)
-        or transaction_text.startswith(UNAVAILABLE_PREFIX)
+        transaction_text.startswith(UNAVAILABLE_PREFIX)
         or app_result_text.startswith(UNAVAILABLE_PREFIX)
     ):
         return _reject_review(
@@ -296,8 +313,8 @@ Campaign task:
 Required proof:
 {proof_requirement}
 
-Product page text:
-{product_text}
+Product URL:
+{product_url}
 
 Transaction proof page text:
 {transaction_text}
@@ -308,6 +325,9 @@ App result page text:
 Tester feedback:
 {feedback_text}
 
+Expected tester wallet:
+{tester_address}
+
 Rubric, total 100:
 - Usage proof validity, proof_score: 0..40.
 - Feedback specificity, feedback_score: 0..25.
@@ -315,8 +335,18 @@ Rubric, total 100:
 - Originality / non-spam, originality_score: 0..15.
 
 Evaluate rigorously:
-- usage_valid must be false when proof links are unreachable, generic, identical to
-  the product page, or do not show the task was actually completed.
+- transaction_success is true only when the transaction evidence visibly shows a
+  successful or finalized execution, rather than merely submitted or accepted with
+  an execution error.
+- identity_match is true only when the transaction sender/from address visibly
+  matches the expected tester wallet above. Never infer identity from the tester's
+  written claim alone.
+- task_completed is true only when the rendered transaction and outcome evidence
+  together demonstrate the campaign task. A generic product homepage is not outcome
+  evidence.
+- usage_valid must equal transaction_success AND identity_match AND task_completed.
+- usage_valid must be false when proof links are unreachable, generic, duplicated,
+  or do not show the task was actually completed.
 - A high quality written observation cannot compensate for invalid usage proof.
 - Penalize vague feedback, copy-pasted text, missing transaction/result evidence,
   and claims that are not visible in the rendered proof.
@@ -325,6 +355,9 @@ Evaluate rigorously:
 Return only JSON with:
 {{
   "score": <integer 0..100>,
+  "transaction_success": <true|false>,
+  "identity_match": <true|false>,
+  "task_completed": <true|false>,
   "usage_valid": <true|false>,
   "feedback_quality": "LOW"|"MEDIUM"|"HIGH",
   "proof_score": <integer 0..40>,
@@ -402,6 +435,15 @@ class Submission:
     improvement_recommendation: str
     risk_flags: str
     claimed: bool
+    transaction_success: bool
+    identity_match: bool
+    task_completed: bool
+    usage_valid: bool
+    feedback_quality: str
+    proof_score: u256
+    feedback_score: u256
+    insight_score: u256
+    originality_score: u256
 
 
 class VerdictProof(gl.Contract):
@@ -519,6 +561,15 @@ class VerdictProof(gl.Contract):
             improvement_recommendation="Run AI review after the tester submits all required proof links.",
             risk_flags="PENDING_REVIEW",
             claimed=False,
+            transaction_success=False,
+            identity_match=False,
+            task_completed=False,
+            usage_valid=False,
+            feedback_quality="PENDING",
+            proof_score=u256(0),
+            feedback_score=u256(0),
+            insight_score=u256(0),
+            originality_score=u256(0),
         )
         self.submissions[sid] = submission
         self.campaign_submissions.get_or_insert_default(campaign_id).append(sid)
@@ -543,6 +594,7 @@ class VerdictProof(gl.Contract):
         transaction_url = str(submission.transaction_url)
         app_result_url = str(submission.app_result_url)
         feedback_text = str(submission.feedback_text)
+        tester_address = submission.tester.as_hex
         minimum_score = int(campaign.minimum_score)
         reward_per_approved = int(campaign.reward_per_approved)
 
@@ -554,6 +606,7 @@ class VerdictProof(gl.Contract):
                 transaction_url,
                 app_result_url,
                 feedback_text,
+                tester_address,
                 minimum_score,
                 reward_per_approved,
             )
@@ -598,6 +651,15 @@ class VerdictProof(gl.Contract):
         submission.evidence_summary = str(result["evidence_summary"])[:MAX_REVIEW_DETAIL_CHARS]
         submission.improvement_recommendation = str(result["improvement_recommendation"])[:MAX_REVIEW_DETAIL_CHARS]
         submission.risk_flags = str(result["risk_flags"])[:MAX_REASON_CHARS]
+        submission.transaction_success = bool(result["transaction_success"])
+        submission.identity_match = bool(result["identity_match"])
+        submission.task_completed = bool(result["task_completed"])
+        submission.usage_valid = bool(result["usage_valid"])
+        submission.feedback_quality = str(result["feedback_quality"])[:20]
+        submission.proof_score = u256(int(result["proof_score"]))
+        submission.feedback_score = u256(int(result["feedback_score"]))
+        submission.insight_score = u256(int(result["insight_score"]))
+        submission.originality_score = u256(int(result["originality_score"]))
         return self.get_submission(submission_id)
 
     @gl.public.write
@@ -679,6 +741,15 @@ class VerdictProof(gl.Contract):
             "improvement_recommendation": str(s.improvement_recommendation),
             "risk_flags": str(s.risk_flags),
             "claimed": bool(s.claimed),
+            "transaction_success": bool(s.transaction_success),
+            "identity_match": bool(s.identity_match),
+            "task_completed": bool(s.task_completed),
+            "usage_valid": bool(s.usage_valid),
+            "feedback_quality": str(s.feedback_quality),
+            "proof_score": int(s.proof_score),
+            "feedback_score": int(s.feedback_score),
+            "insight_score": int(s.insight_score),
+            "originality_score": int(s.originality_score),
         }
 
     @gl.public.view

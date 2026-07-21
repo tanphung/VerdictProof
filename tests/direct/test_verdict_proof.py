@@ -6,7 +6,7 @@ web/LLM review. Full validator agreement should be covered by integration tests.
 
 import json
 
-CONTRACT = "contracts/signal_stake.py"
+CONTRACT = "contracts/verdict_proof.py"
 ONE_GEN = 10**18
 POOL = 5 * 10**17
 REWARD = 5 * 10**16
@@ -47,6 +47,9 @@ def approve_demo_submission(contract, direct_vm, direct_alice):
         json.dumps(
             {
                 "score": 90,
+                "transaction_success": True,
+                "identity_match": True,
+                "task_completed": True,
                 "usage_valid": True,
                 "feedback_quality": "HIGH",
                 "proof_score": 38,
@@ -337,6 +340,9 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
         json.dumps(
             {
                 "score": 87,
+                "transaction_success": True,
+                "identity_match": True,
+                "task_completed": True,
                 "usage_valid": True,
                 "feedback_quality": "HIGH",
                 "proof_score": 36,
@@ -352,6 +358,11 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
     reviewed = contract.evaluate_submission(sid)
     assert reviewed["status"] == "APPROVED"
     assert reviewed["score"] == 87
+    assert reviewed["transaction_success"] is True
+    assert reviewed["identity_match"] is True
+    assert reviewed["task_completed"] is True
+    assert reviewed["usage_valid"] is True
+    assert reviewed["proof_score"] == 36
     assert reviewed["reward_amount"] == str(REWARD)
     assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
 
@@ -388,6 +399,9 @@ def test_evaluate_rejects_generic_feedback_and_slashes_stake(direct_vm, direct_d
         json.dumps(
             {
                 "score": 32,
+                "transaction_success": False,
+                "identity_match": False,
+                "task_completed": False,
                 "usage_valid": False,
                 "feedback_quality": "LOW",
                 "proof_score": 8,
@@ -428,6 +442,9 @@ def test_evaluate_rejects_high_score_when_usage_proof_invalid(direct_vm, direct_
         json.dumps(
             {
                 "score": 82,
+                "transaction_success": True,
+                "identity_match": True,
+                "task_completed": False,
                 "usage_valid": False,
                 "feedback_quality": "HIGH",
                 "proof_score": 35,
@@ -443,6 +460,10 @@ def test_evaluate_rejects_high_score_when_usage_proof_invalid(direct_vm, direct_
     reviewed = contract.evaluate_submission(sid)
     assert reviewed["status"] == "REJECTED"
     assert reviewed["score"] == 82
+    assert reviewed["transaction_success"] is True
+    assert reviewed["identity_match"] is True
+    assert reviewed["task_completed"] is False
+    assert reviewed["usage_valid"] is False
     assert reviewed["reward_amount"] == "0"
     assert contract.get_campaign(cid)["reward_pool"] == str(POOL + STAKE)
 
@@ -516,6 +537,9 @@ def test_rejected_submission_cannot_claim(direct_vm, direct_deploy, direct_alice
         json.dumps(
             {
                 "score": 20,
+                "transaction_success": False,
+                "identity_match": False,
+                "task_completed": False,
                 "usage_valid": False,
                 "feedback_quality": "LOW",
                 "proof_score": 5,

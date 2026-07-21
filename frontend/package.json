@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "smoke:bradbury": "node scripts/live-smoke.mjs",
+    "verify:bradbury": "node scripts/verify-multi-wallet.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

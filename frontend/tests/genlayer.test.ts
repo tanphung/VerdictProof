@@ -72,7 +72,7 @@ vi.mock("viem", async (importOriginal) => {
 describe("genlayer frontend helpers", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.stubEnv("VITE_SIGNALSTAKE_CONTRACT_ADDRESS", "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a");
+    vi.stubEnv("VITE_VERDICTPROOF_CONTRACT_ADDRESS", "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a");
     vi.stubEnv("VITE_GENLAYER_EXPLORER", "https://explorer-bradbury.genlayer.com");
     readContractMock.mockReset();
     writeContractMock.mockReset();
@@ -167,7 +167,7 @@ describe("genlayer frontend helpers", () => {
     expect(typeof decoded.args?.[5]).toBe("bigint");
   });
 
-  it("parses transaction status and validator agreement", async () => {
+  it("keeps validator agreement pending until execution succeeds", async () => {
     const { getTransactionStatus } = await import("../src/lib/genlayer");
     getTransaction.mockResolvedValueOnce({
       status_name: "ACCEPTED",
@@ -185,13 +185,27 @@ describe("genlayer frontend helpers", () => {
     const status = await getTransactionStatus("0xhash");
 
     expect(status).toEqual({
-      stage: "accepted",
+      stage: "pending",
       statusName: "ACCEPTED",
       resultName: "AGREE",
       executionResultName: "",
       validatorsAgreed: 2,
       validatorsTotal: 5
     });
+  });
+
+  it("accepts only a finished contract execution", async () => {
+    const { getTransactionStatus } = await import("../src/lib/genlayer");
+    getTransaction.mockResolvedValueOnce({
+      status_name: "ACCEPTED",
+      result_name: "AGREE",
+      txExecutionResultName: "FINISHED_WITH_RETURN"
+    });
+
+    const status = await getTransactionStatus("0xhash");
+
+    expect(status.stage).toBe("accepted");
+    expect(status.executionResultName).toBe("FINISHED_WITH_RETURN");
   });
 
   it("treats accepted execution errors as failed transactions", async () => {

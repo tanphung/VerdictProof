@@ -95,6 +95,15 @@ type ChainSubmission = {
   score: number | string | bigint;
   approved: boolean;
   reward_amount: string | number | bigint;
+  transaction_success?: boolean;
+  identity_match?: boolean;
+  task_completed?: boolean;
+  usage_valid?: boolean;
+  feedback_quality?: string;
+  proof_score?: number | string | bigint;
+  feedback_score?: number | string | bigint;
+  insight_score?: number | string | bigint;
+  originality_score?: number | string | bigint;
   reason_summary: string;
   evidence_summary?: string;
   improvement_recommendation?: string;
@@ -152,6 +161,15 @@ function normalizeSubmission(item: ChainSubmission, campaignTitle = "Live campai
     score: toNumber(item.score),
     approved: Boolean(item.approved),
     rewardAmount: toBigInt(item.reward_amount),
+    transactionSuccess: Boolean(item.transaction_success),
+    identityMatch: Boolean(item.identity_match),
+    taskCompleted: Boolean(item.task_completed),
+    usageValid: Boolean(item.usage_valid),
+    feedbackQuality: item.feedback_quality || "UNASSESSED",
+    proofScore: toNumber(item.proof_score ?? 0),
+    feedbackScore: toNumber(item.feedback_score ?? 0),
+    insightScore: toNumber(item.insight_score ?? 0),
+    originalityScore: toNumber(item.originality_score ?? 0),
     reasonSummary: item.reason_summary,
     evidenceSummary: item.evidence_summary || "GenLayer review detail is not available for this submission.",
     improvementRecommendation: item.improvement_recommendation || "Use a newer VerdictProof contract review to receive a specific recommendation.",
@@ -233,8 +251,9 @@ type LiveState = {
 
 type AppView = "campaigns" | "review" | "dashboard" | "claims";
 
-const TX_FEED_STORAGE_KEY = "verdictproof:bradbury:tx-feed:v1";
-const LIVE_STATE_STORAGE_KEY = "verdictproof:bradbury:live-state:v1";
+const CONTRACT_STORAGE_SCOPE = explorerContract().split("/").filter(Boolean).pop()?.toLowerCase() || "unconfigured";
+const TX_FEED_STORAGE_KEY = `verdictproof:bradbury:${CONTRACT_STORAGE_SCOPE}:tx-feed:v2`;
+const LIVE_STATE_STORAGE_KEY = `verdictproof:bradbury:${CONTRACT_STORAGE_SCOPE}:live-state:v2`;
 
 function isAppView(value: string | null): value is AppView {
   return value === "campaigns" || value === "review" || value === "dashboard" || value === "claims";
@@ -245,6 +264,22 @@ function initialAppView(): AppView {
   const view = new URLSearchParams(window.location.search).get("view");
   if (isAppView(view)) return view;
   return window.location.hash.startsWith("#submission-") ? "dashboard" : "campaigns";
+}
+
+function campaignIdFromUrl() {
+  if (typeof window === "undefined") return 0;
+  const value = Number(new URLSearchParams(window.location.search).get("campaign"));
+  return Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+function preferredCampaignId(campaigns: Campaign[]) {
+  return campaigns.reduce<Campaign | undefined>((preferred, campaign) => {
+    if (!preferred || campaign.submissionCount > preferred.submissionCount) return campaign;
+    if (campaign.submissionCount === preferred.submissionCount && campaign.campaignId < preferred.campaignId) {
+      return campaign;
+    }
+    return preferred;
+  }, undefined)?.campaignId ?? 0;
 }
 
 function submissionResultId(submission: Submission) {
@@ -329,7 +364,16 @@ function loadStoredLiveState(): LiveState {
       submissions: parsed.submissions.map((submission) => ({
         ...submission,
         stakeAmount: BigInt(submission.stakeAmount || 0),
-        rewardAmount: BigInt(submission.rewardAmount || 0)
+        rewardAmount: BigInt(submission.rewardAmount || 0),
+        transactionSuccess: Boolean(submission.transactionSuccess),
+        identityMatch: Boolean(submission.identityMatch),
+        taskCompleted: Boolean(submission.taskCompleted),
+        usageValid: Boolean(submission.usageValid),
+        feedbackQuality: submission.feedbackQuality || "UNASSESSED",
+        proofScore: Number(submission.proofScore || 0),
+        feedbackScore: Number(submission.feedbackScore || 0),
+        insightScore: Number(submission.insightScore || 0),
+        originalityScore: Number(submission.originalityScore || 0)
       }))
     };
   } catch {
@@ -369,7 +413,7 @@ function App() {
   const [campaigns, setCampaigns] = useState<Campaign[]>(initialLiveState.campaigns);
   const [submissions, setSubmissions] = useState<Submission[]>(initialLiveState.submissions);
   const [selectedCampaignId, setSelectedCampaignId] = useState<number>(
-    initialLiveState.campaigns[initialLiveState.campaigns.length - 1]?.campaignId ?? 0
+    campaignIdFromUrl() || preferredCampaignId(initialLiveState.campaigns)
   );
   const [showCreate, setShowCreate] = useState(false);
   const [campaignForm, setCampaignForm] = useState<CampaignForm>(defaultCampaignForm);
@@ -461,9 +505,11 @@ function App() {
         setCampaigns(liveCampaigns);
         setSubmissions((current) => current.filter((submission) => liveCampaignIds.has(submission.campaignId)));
         setSelectedCampaignId((current) =>
-          liveCampaigns.some((campaign) => campaign.campaignId === current)
-            ? current
-            : liveCampaigns[liveCampaigns.length - 1]?.campaignId ?? 0
+          liveCampaigns.some((campaign) => campaign.campaignId === campaignIdFromUrl())
+            ? campaignIdFromUrl()
+            : liveCampaigns.some((campaign) => campaign.campaignId === current)
+              ? current
+              : preferredCampaignId(liveCampaigns)
         );
 
         const liveSubmissions = (
@@ -1183,6 +1229,17 @@ function ReviewHistory({ submissions }: { submissions: Submission[] }) {
                 <span>{scoreLabel(submission.score)}</span>
               </div>
               <p className="reason">{submission.reasonSummary}</p>
+              <div className="verification-grid" aria-label="Verified on-chain evidence checks">
+                <VerificationFact label="Transaction finalized" passed={submission.transactionSuccess} />
+                <VerificationFact label="Tester wallet matched" passed={submission.identityMatch} />
+                <VerificationFact label="Task completion proven" passed={submission.taskCompleted} />
+              </div>
+              <div className="rubric-grid" aria-label="GenLayer review score breakdown">
+                <RubricScore label="Proof" value={submission.proofScore} maximum={40} />
+                <RubricScore label="Specificity" value={submission.feedbackScore} maximum={25} />
+                <RubricScore label="Insight" value={submission.insightScore} maximum={20} />
+                <RubricScore label="Originality" value={submission.originalityScore} maximum={15} />
+              </div>
               <div className="review-detail-grid">
                 <div>
                   <span>Evidence checked</span>
@@ -1226,6 +1283,24 @@ function ReviewHistory({ submissions }: { submissions: Submission[] }) {
         </div>
       )}
     </section>
+  );
+}
+
+function VerificationFact({ label, passed }: { label: string; passed: boolean }) {
+  return (
+    <span className={passed ? "verification-fact passed" : "verification-fact failed"}>
+      {passed ? <CheckCircle2 size={14} /> : <X size={14} />}
+      {label}
+    </span>
+  );
+}
+
+function RubricScore({ label, value, maximum }: { label: string; value: number; maximum: number }) {
+  return (
+    <div className="rubric-score">
+      <span>{label}</span>
+      <strong>{value}/{maximum}</strong>
+    </div>
   );
 }
 
@@ -1325,11 +1400,11 @@ function CampaignDetail({
             />
           </label>
           <label>
-            App result URL
+            Outcome evidence URL
             <input
               spellCheck={false}
               required
-              placeholder="https://your-product.example/result/..."
+              placeholder="https://public-result-or-contract.example/..."
               value={proofForm.appResultUrl}
               onChange={(event) => setProofForm({ ...proofForm, appResultUrl: event.target.value })}
             />
@@ -1345,7 +1420,7 @@ function CampaignDetail({
             />
           </label>
           <p className="form-hint">
-            GenLayer validators read these proof links and judge whether the feedback proves real product usage.
+            Validators verify transaction success, tester wallet ownership, task completion, and feedback quality.
           </p>
           <button className="primary-button full" type="submit" disabled={busy === "submit"}>
             {busy === "submit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />}

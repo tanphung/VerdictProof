@@ -14,7 +14,7 @@ declare global {
 
 const runtimeConfig = typeof window === "undefined" ? undefined : window.__VERDICTPROOF_CONFIG__;
 
-export const CONTRACT_ADDRESS = runtimeConfig?.contractAddress || import.meta.env.VITE_SIGNALSTAKE_CONTRACT_ADDRESS || "";
+export const CONTRACT_ADDRESS = runtimeConfig?.contractAddress || import.meta.env.VITE_VERDICTPROOF_CONTRACT_ADDRESS || "";
 export const EXPLORER =
   runtimeConfig?.explorer || import.meta.env.VITE_GENLAYER_EXPLORER || "https://explorer-bradbury.genlayer.com";
 export const CHAIN = testnetBradbury;
@@ -81,12 +81,12 @@ export function makeWalletClient(provider: Eip1193Provider, address: string) {
     account: address as `0x${string}`,
     provider: provider as never
   } as never) as ReturnType<typeof createClient> & {
-    __signalStakeProvider?: Eip1193Provider;
-    __signalStakeAddress?: string;
+    __verdictProofProvider?: Eip1193Provider;
+    __verdictProofAddress?: string;
   };
 
-  client.__signalStakeProvider = provider;
-  client.__signalStakeAddress = address;
+  client.__verdictProofProvider = provider;
+  client.__verdictProofAddress = address;
   return client;
 }
 
@@ -143,15 +143,15 @@ async function addOrUpdateBradburyNetwork(provider: Eip1193Provider) {
 
 export async function writeContract(
   client: ReturnType<typeof createClient> & {
-    __signalStakeProvider?: Eip1193Provider;
-    __signalStakeAddress?: string;
+    __verdictProofProvider?: Eip1193Provider;
+    __verdictProofAddress?: string;
   },
   functionName: string,
   args: unknown[] = [],
   value: bigint = 0n
 ) {
-  if (client.__signalStakeProvider && client.__signalStakeAddress) {
-    return sendBrowserWriteTransaction(client.__signalStakeProvider, client.__signalStakeAddress, functionName, args, value);
+  if (client.__verdictProofProvider && client.__verdictProofAddress) {
+    return sendBrowserWriteTransaction(client.__verdictProofProvider, client.__verdictProofAddress, functionName, args, value);
   }
 
   const request = {
@@ -345,7 +345,7 @@ export async function waitAccepted(client: ReturnType<typeof createClient>, hash
         `Bradbury accepted the transaction but execution failed: ${status.executionResultName || status.resultName || status.statusName}`
       );
     }
-    if (status.executionResultName === "FINISHED_WITH_RETURN" || (!status.executionResultName && status.resultName === "AGREE")) {
+    if ((status.stage === "accepted" || status.stage === "finalized") && status.executionResultName === "FINISHED_WITH_RETURN") {
       return status;
     }
     await sleep(3000);
@@ -398,8 +398,8 @@ export async function getTransactionStatus(hash: string): Promise<TxStatus> {
   let stage: TxStage = "pending";
   if (hasExecutionFailure || resultName.includes("ERROR") || resultName.includes("REVERT") || resultName.includes("FAILED")) stage = "failed";
   else if (statusName.includes("UNDETERMINED") || statusName.includes("CANCELED")) stage = "failed";
-  else if (statusName.includes("FINALIZED") && (executionResultName === "FINISHED_WITH_RETURN" || resultName === "AGREE")) stage = "finalized";
-  else if (statusName.includes("ACCEPTED") && (executionResultName === "FINISHED_WITH_RETURN" || resultName === "AGREE")) stage = "accepted";
+  else if (statusName.includes("FINALIZED") && executionResultName === "FINISHED_WITH_RETURN") stage = "finalized";
+  else if (statusName.includes("ACCEPTED") && executionResultName === "FINISHED_WITH_RETURN") stage = "accepted";
 
   return { stage, statusName, resultName, executionResultName, validatorsAgreed, validatorsTotal };
 }

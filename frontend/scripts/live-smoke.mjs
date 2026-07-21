@@ -94,9 +94,9 @@ async function pollUntil(label, fn, tries = 12) {
 async function main() {
   const rootEnv = readEnv(resolve(ROOT, ".env"));
   const frontendEnv = readEnv(resolve(ROOT, "frontend", ".env"));
-  const contractAddress = frontendEnv.VITE_SIGNALSTAKE_CONTRACT_ADDRESS;
+  const contractAddress = frontendEnv.VITE_VERDICTPROOF_CONTRACT_ADDRESS;
   if (!/^0x[a-fA-F0-9]{40}$/.test(contractAddress ?? "")) {
-    throw new Error("VITE_SIGNALSTAKE_CONTRACT_ADDRESS is missing or invalid in frontend/.env");
+    throw new Error("VITE_VERDICTPROOF_CONTRACT_ADDRESS is missing or invalid in frontend/.env");
   }
 
   const account = privateKeyToAccount(requireHexPrivateKey(rootEnv.ACCOUNT_PRIVATE_KEY));

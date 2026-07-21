@@ -5,10 +5,8 @@
 Local workspace path used during development:
 
 ```text
-D:\app genlayer\SignalStake
+D:\app genlayer\VerdictProof
 ```
-
-The product brand is VerdictProof; the local folder name may still use the older working title.
 ---
 
 ## Your Role
