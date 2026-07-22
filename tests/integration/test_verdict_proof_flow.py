@@ -131,7 +131,7 @@ def test_ai_review_reaches_consensus_on_public_evidence():
     assert result["status"] != "PENDING"
     assert result["reason_summary"]
     assert result["evidence_summary"]
-    assert isinstance(result["transaction_success"], bool)
+    assert result["transaction_success"] is True
     assert isinstance(result["identity_match"], bool)
     assert isinstance(result["task_completed"], bool)
     assert result["usage_valid"] == (

@@ -157,15 +157,15 @@ def _fetch_bradbury_transaction(url: str) -> typing.Optional[dict]:
     if not tx_hash:
         return None
     try:
-        response = gl.nondet.web.request(
+        response = gl.nondet.web.post(
             BRADBURY_RPC_URL,
-            method="POST",
-            body={
+            body=json.dumps({
                 "jsonrpc": "2.0",
                 "method": "gen_getTransactionReceipt",
                 "params": [{"txId": tx_hash}],
                 "id": 1,
-            },
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
         )
         status_code = int(getattr(response, "status_code", getattr(response, "status", 0)))
         if status_code < 200 or status_code >= 300:
