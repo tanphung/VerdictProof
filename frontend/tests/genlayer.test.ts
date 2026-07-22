@@ -240,4 +240,18 @@ describe("genlayer frontend helpers", () => {
     expect(status.statusName).toBe("FINALIZED");
     expect(status.resultName).toBe("NO_MAJORITY");
   });
+
+  it("does not accept a terminal validator-timeout result", async () => {
+    const { getTransactionStatus } = await import("../src/lib/genlayer");
+    getTransaction.mockResolvedValueOnce({
+      status_name: "ACCEPTED",
+      result_name: "VALIDATORS_TIMEOUT",
+      txExecutionResultName: "FINISHED_WITH_RETURN"
+    });
+
+    const status = await getTransactionStatus("0xhash");
+
+    expect(status.stage).toBe("failed");
+    expect(status.resultName).toBe("VALIDATORS_TIMEOUT");
+  });
 });

@@ -390,21 +390,18 @@ export async function getTransactionStatus(hash: string): Promise<TxStatus> {
   const statusName = String(tx.status_name ?? tx.statusName ?? tx.status ?? "PENDING").toUpperCase();
   const resultName = String(tx.result_name ?? tx.resultName ?? "").toUpperCase();
   const executionResultName = String(tx.txExecutionResultName ?? "").toUpperCase();
+  const terminalLifecycle = statusName.includes("ACCEPTED") || statusName.includes("FINALIZED");
   const hasExecutionFailure =
     executionResultName.includes("ERROR") ||
     executionResultName.includes("REVERT") ||
     executionResultName.includes("FAILED");
-  const hasConsensusFailure =
-    resultName.includes("NO_MAJORITY") ||
-    resultName.includes("DISAGREE") ||
-    resultName.includes("UNDETERMINED") ||
-    resultName.includes("CANCELED");
+  const hasConsensusFailure = terminalLifecycle && resultName !== "AGREE";
 
   let stage: TxStage = "pending";
   if (hasExecutionFailure || hasConsensusFailure || resultName.includes("ERROR") || resultName.includes("REVERT") || resultName.includes("FAILED")) stage = "failed";
   else if (statusName.includes("UNDETERMINED") || statusName.includes("CANCELED")) stage = "failed";
-  else if (statusName.includes("FINALIZED") && executionResultName === "FINISHED_WITH_RETURN") stage = "finalized";
-  else if (statusName.includes("ACCEPTED") && executionResultName === "FINISHED_WITH_RETURN") stage = "accepted";
+  else if (statusName.includes("FINALIZED") && resultName === "AGREE" && executionResultName === "FINISHED_WITH_RETURN") stage = "finalized";
+  else if (statusName.includes("ACCEPTED") && resultName === "AGREE" && executionResultName === "FINISHED_WITH_RETURN") stage = "accepted";
 
   return { stage, statusName, resultName, executionResultName, validatorsAgreed, validatorsTotal };
 }

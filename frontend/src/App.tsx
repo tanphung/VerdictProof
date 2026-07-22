@@ -768,6 +768,8 @@ function App() {
         if (liveMode) {
           await loadLiveData("Wallet ready on Bradbury. Live campaigns refreshed.");
         }
+      } else {
+        setNotice("The wallet did not return an account. Unlock it, approve account access for VerdictProof, then connect again.");
       }
     } catch (error) {
       setNotice(errorMessage(error, "Wallet connection failed."));

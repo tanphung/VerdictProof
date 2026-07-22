@@ -70,6 +70,21 @@ function uninstallWindowEthereum() {
   });
 }
 
+function installLockedWallet() {
+  Object.defineProperty(window, "ethereum", {
+    configurable: true,
+    value: {
+      request: vi.fn(async ({ method }: { method: string }) => {
+        if (method === "eth_requestAccounts" || method === "eth_accounts") return [];
+        if (method === "eth_chainId") return "0x107d";
+        return null;
+      }),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    }
+  });
+}
+
 function installEip6963Wallet() {
   const request = vi.fn(async ({ method }: { method: string }) => {
     if (method === "eth_requestAccounts") return [walletAddress];
@@ -185,6 +200,19 @@ describe("VerdictProof app live wallet flow", () => {
     await user.click(screen.getByRole("button", { name: /Connect Wallet/i }));
 
     expect(await screen.findByText("Wallet ready on Bradbury. Live campaigns refreshed.")).toBeInTheDocument();
+  });
+
+  it("explains when a detected wallet returns no account", async () => {
+    const user = userEvent.setup();
+    installLockedWallet();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^Claims$/i }));
+    await user.click(screen.getByRole("button", { name: /Connect Wallet/i }));
+
+    expect(
+      await screen.findByText("The wallet did not return an account. Unlock it, approve account access for VerdictProof, then connect again.")
+    ).toBeInTheDocument();
   });
 
   it("connects wallets announced through EIP-6963 provider discovery", async () => {

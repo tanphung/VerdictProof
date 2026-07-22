@@ -226,12 +226,13 @@ async function waitExecuted(client, hash, label) {
     }
 
     const executionFailed = /ERROR|REVERT|FAILED/.test(executionResultName) || /ERROR|REVERT|FAILED/.test(resultName);
-    const consensusFailed = /NO_MAJORITY|DISAGREE|UNDETERMINED|CANCELED/.test(resultName);
+    const terminalLifecycle = /ACCEPTED|FINALIZED/.test(statusName);
+    const consensusFailed = terminalLifecycle && resultName !== "AGREE";
     const lifecycleFailed = /UNDETERMINED|CANCELED/.test(statusName);
     if (executionFailed || consensusFailed || lifecycleFailed) {
       throw new Error(`${label} failed: ${state}`);
     }
-    if (/ACCEPTED|FINALIZED/.test(statusName) && executionResultName === "FINISHED_WITH_RETURN") {
+    if (terminalLifecycle && resultName === "AGREE" && executionResultName === "FINISHED_WITH_RETURN") {
       return { hash, statusName, resultName, executionResultName };
     }
     await sleep(5000);
