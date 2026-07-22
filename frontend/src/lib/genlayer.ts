@@ -399,7 +399,7 @@ export async function getTransactionStatus(hash: string): Promise<TxStatus> {
 
   let stage: TxStage = "pending";
   if (hasExecutionFailure || hasConsensusFailure || resultName.includes("ERROR") || resultName.includes("REVERT") || resultName.includes("FAILED")) stage = "failed";
-  else if (statusName.includes("UNDETERMINED") || statusName.includes("CANCELED")) stage = "failed";
+  else if (statusName.includes("UNDETERMINED") || statusName.includes("CANCELED") || statusName.includes("TIMEOUT")) stage = "failed";
   else if (statusName.includes("FINALIZED") && resultName === "AGREE" && executionResultName === "FINISHED_WITH_RETURN") stage = "finalized";
   else if (statusName.includes("ACCEPTED") && resultName === "AGREE" && executionResultName === "FINISHED_WITH_RETURN") stage = "accepted";
 

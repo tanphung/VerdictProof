@@ -228,7 +228,7 @@ async function waitExecuted(client, hash, label) {
     const executionFailed = /ERROR|REVERT|FAILED/.test(executionResultName) || /ERROR|REVERT|FAILED/.test(resultName);
     const terminalLifecycle = /ACCEPTED|FINALIZED/.test(statusName);
     const consensusFailed = terminalLifecycle && resultName !== "AGREE";
-    const lifecycleFailed = /UNDETERMINED|CANCELED/.test(statusName);
+    const lifecycleFailed = /UNDETERMINED|CANCELED|TIMEOUT/.test(statusName);
     if (executionFailed || consensusFailed || lifecycleFailed) {
       throw new Error(`${label} failed: ${state}`);
     }

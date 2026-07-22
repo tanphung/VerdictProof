@@ -254,4 +254,18 @@ describe("genlayer frontend helpers", () => {
     expect(status.stage).toBe("failed");
     expect(status.resultName).toBe("VALIDATORS_TIMEOUT");
   });
+
+  it("stops pending UI for a validator-timeout lifecycle", async () => {
+    const { getTransactionStatus } = await import("../src/lib/genlayer");
+    getTransaction.mockResolvedValueOnce({
+      status_name: "VALIDATORS_TIMEOUT",
+      result_name: "TIMEOUT",
+      txExecutionResultName: "FINISHED_WITH_RETURN"
+    });
+
+    const status = await getTransactionStatus("0xhash");
+
+    expect(status.stage).toBe("failed");
+    expect(status.statusName).toBe("VALIDATORS_TIMEOUT");
+  });
 });
