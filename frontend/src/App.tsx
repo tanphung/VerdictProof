@@ -30,6 +30,7 @@ import {
   getTransactionStatus,
   type Eip1193Provider,
   hasContractConfig,
+  isTransactionPendingError,
   makeWalletClient,
   readContract,
   type TxStatus,
@@ -575,7 +576,7 @@ function App() {
 
   useEffect(() => {
     const hashes = txFeed
-      .filter((item) => item.hash && item.status?.stage !== "failed" && item.status?.stage !== "finalized")
+      .filter((item) => item.hash && (!item.status || item.status.stage === "pending"))
       .map((item) => item.hash as string);
     if (hashes.length === 0) return;
     let mounted = true;
@@ -587,6 +588,7 @@ function App() {
           try {
             const status = await getTransactionStatus(hash);
             if (!mounted) return;
+            const tracked = txFeed.find((item) => item.hash === hash);
             setActiveTx((current) =>
               current?.hash === hash && !sameTxStatus(current.status, status) ? { ...current, status } : current
             );
@@ -599,6 +601,11 @@ function App() {
               });
               return changed ? next : items;
             });
+            if (status.stage === "accepted" || status.stage === "finalized") {
+              await loadLiveData(`${tracked?.label || "Transaction"} confirmed on Bradbury. Live state refreshed.`);
+            } else if (status.stage === "failed") {
+              setNotice(`${tracked?.label || "Transaction"} failed on Bradbury. Open its transaction link for details.`);
+            }
           } catch {
             // The explorer/RPC can lag just after wallet signing; the next poll usually resolves it.
           }
@@ -618,7 +625,7 @@ function App() {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [txFeed]);
+  }, [loadLiveData, txFeed]);
 
   useEffect(() => {
     if (!provider?.on) return;
@@ -733,6 +740,10 @@ function App() {
       await waitAccepted(client, hash);
       await waitForLiveState(isSynced, successMessage(hash));
     } catch (error) {
+      if (hash && isTransactionPendingError(error)) {
+        setNotice(`${label} is still in GenLayer consensus. You can continue using VerdictProof; this transaction will update automatically when Bradbury settles it.`);
+        return;
+      }
       const message = errorMessage(error, `${label} failed.`);
       if (hash) {
         markTxFailed(hash, message);

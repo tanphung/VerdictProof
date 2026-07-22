@@ -268,4 +268,17 @@ describe("genlayer frontend helpers", () => {
     expect(status.stage).toBe("failed");
     expect(status.statusName).toBe("VALIDATORS_TIMEOUT");
   });
+
+  it("distinguishes an unfinished poll window from transaction failure", async () => {
+    const { readClient, waitAccepted } = await import("../src/lib/genlayer");
+    getTransaction.mockResolvedValueOnce({
+      status_name: "COMMITTING",
+      result_name: "IDLE",
+      txExecutionResultName: "NOT_VOTED"
+    });
+
+    await expect(waitAccepted(readClient(), "0xhash", 1)).rejects.toMatchObject({
+      name: "TransactionPendingError"
+    });
+  });
 });

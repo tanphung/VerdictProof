@@ -46,6 +46,20 @@ export type TxStatus = {
   validatorsTotal: number;
 };
 
+export class TransactionPendingError extends Error {
+  status: TxStatus | null;
+
+  constructor(status: TxStatus | null) {
+    super(`Transaction is still pending on Bradbury: ${status?.statusName || "UNKNOWN"}`);
+    this.name = "TransactionPendingError";
+    this.status = status;
+  }
+}
+
+export function isTransactionPendingError(error: unknown): error is TransactionPendingError {
+  return error instanceof TransactionPendingError;
+}
+
 export function hasContractConfig() {
   return Boolean(CONTRACT_ADDRESS);
 }
@@ -335,9 +349,9 @@ function extractGenlayerTxIdFromLogs(logs: Array<{ address?: string; topics?: st
   return null;
 }
 
-export async function waitAccepted(client: ReturnType<typeof createClient>, hash: string) {
+export async function waitAccepted(client: ReturnType<typeof createClient>, hash: string, maxAttempts = 80) {
   let lastStatus: TxStatus | null = null;
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const status = await getTransactionStatus(hash);
     lastStatus = status;
     if (status.stage === "failed") {
@@ -348,13 +362,9 @@ export async function waitAccepted(client: ReturnType<typeof createClient>, hash
     if ((status.stage === "accepted" || status.stage === "finalized") && status.executionResultName === "FINISHED_WITH_RETURN") {
       return status;
     }
-    await sleep(3000);
+    if (attempt < maxAttempts - 1) await sleep(3000);
   }
-  throw new Error(
-    `Bradbury accepted the transaction but no successful execution result was returned yet: ${
-      lastStatus?.executionResultName || lastStatus?.resultName || lastStatus?.statusName || "UNKNOWN"
-    }`
-  );
+  throw new TransactionPendingError(lastStatus);
 }
 
 export async function getTransactionStatus(hash: string): Promise<TxStatus> {
