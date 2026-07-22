@@ -11,6 +11,35 @@ ONE_GEN = 10**18
 POOL = 5 * 10**17
 REWARD = 5 * 10**16
 STAKE = 10**16
+TX_HASH = "0x760c748dbd931513d4f741f8323d30e050df431f6fd1f439389a4b1f5d430cb7"
+TX_URL = f"https://explorer-bradbury.genlayer.com/tx/{TX_HASH}"
+
+
+def mock_verified_evidence(direct_vm, sender, *, status=7, consensus_result=1, execution_result=1):
+    sender_text = f"0x{sender.hex()}" if isinstance(sender, bytes) else str(sender)
+    direct_vm.mock_web(
+        r"^https://rpc-bradbury\.genlayer\.com$",
+        {
+            "method": "POST",
+            "status": 200,
+            "body": json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "id": TX_HASH,
+                        "sender": sender_text,
+                        "recipient": "0x8b9f38f52c82a333c46f1061be242a9a880e6b0e",
+                        "status": status,
+                        "result": consensus_result,
+                        "txExecutionResult": execution_result,
+                        "txCallData": "6d6574686f647c6372656174655f63616d706169676e",
+                    },
+                    "id": 1,
+                }
+            ),
+        },
+    )
+    direct_vm.mock_web(r".*", {"status": 200, "body": "The public outcome page shows the completed campaign flow."})
 
 
 def create_demo_campaign(contract, direct_vm):
@@ -36,12 +65,12 @@ def approve_demo_submission(contract, direct_vm, direct_alice):
     sid = contract.submit_proof(
         cid,
         STAKE,
-        "https://example.com/tx/0xapproved",
+        TX_URL,
         "https://example.com/result/approved",
         "I completed the flow and found the post-signature status messaging unclear.",
     )
     direct_vm.value = 0
-    direct_vm.mock_web(r".*", {"status": 200, "body": "Proof confirms usage."})
+    mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
     direct_vm.mock_llm(
         r".*Rubric, total 100.*",
         json.dumps(
@@ -184,7 +213,7 @@ def test_payable_methods_reject_zero_message_value(direct_vm, direct_deploy, dir
         contract.submit_proof(
             cid,
             STAKE,
-            "https://example.com/tx/0xunfunded",
+            TX_URL,
             "https://example.com/result/unfunded",
             "I completed the flow and found the confirmation copy unclear after wallet signing.",
         )
@@ -213,7 +242,7 @@ def test_observed_native_value_must_match_declared_amount(direct_vm, direct_depl
         contract.submit_proof(
             cid,
             STAKE,
-            "https://example.com/tx/0xmismatch",
+            TX_URL,
             "https://example.com/result/mismatch",
             "I completed the flow and found one specific confirmation issue.",
         )
@@ -229,7 +258,7 @@ def test_submit_proof_creates_pending_submission(direct_vm, direct_deploy, direc
     sid = contract.submit_proof(
         cid,
         STAKE,
-        "https://example.com/tx/0x123",
+        TX_URL,
         "https://example.com/genescrow-demo/result/1",
         "I created an escrow and found the confirmation state unclear after signing.",
     )
@@ -251,7 +280,7 @@ def test_submission_indexes_by_campaign_and_tester(direct_vm, direct_deploy, dir
     sid = contract.submit_proof(
         cid,
         STAKE,
-        "https://example.com/tx/0xindex",
+        TX_URL,
         "https://example.com/result/index",
         "I tested the app and found the confirmation copy unclear after signing.",
     )
@@ -277,7 +306,7 @@ def test_submit_requires_exact_stake(direct_vm, direct_deploy, direct_alice):
         contract.submit_proof(
             cid,
             STAKE - 1,
-            "https://example.com/tx/0x123",
+            TX_URL,
             "https://example.com/result",
             "Specific feedback with enough detail.",
         )
@@ -294,7 +323,7 @@ def test_submit_rejects_missing_campaign_and_bad_urls(direct_vm, direct_deploy, 
         contract.submit_proof(
             999,
             STAKE,
-            "https://example.com/tx/0xmissing",
+            TX_URL,
             "https://example.com/result",
             "Specific feedback with enough detail.",
         )
@@ -312,7 +341,7 @@ def test_submit_rejects_missing_campaign_and_bad_urls(direct_vm, direct_deploy, 
         contract.submit_proof(
             cid,
             STAKE,
-            "https://example.com/tx/0xok",
+            TX_URL,
             "ftp://example.com/result",
             "Specific feedback with enough detail.",
         )
@@ -328,13 +357,13 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
     sid = contract.submit_proof(
         cid,
         STAKE,
-        "https://example.com/tx/0xgood",
+        TX_URL,
         "https://example.com/genescrow-demo/result/good",
         "I created an escrow and submitted a test transaction. The wallet connection worked, but after signing, the UI did not clearly show whether the escrow was pending or confirmed.",
     )
     direct_vm.value = 0
 
-    direct_vm.mock_web(r".*", {"status": 200, "body": "Rendered proof confirms an escrow creation flow."})
+    mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
     direct_vm.mock_llm(
         r".*Rubric, total 100.*",
         json.dumps(
@@ -387,13 +416,13 @@ def test_evaluate_rejects_generic_feedback_and_slashes_stake(direct_vm, direct_d
     sid = contract.submit_proof(
         cid,
         STAKE,
-        "https://example.com/tx/0xbad",
+        TX_URL,
         "https://example.com/genescrow-demo/result/bad",
         "Good app. Nice project. Very useful.",
     )
     direct_vm.value = 0
 
-    direct_vm.mock_web(r".*", {"status": 200, "body": "Proof page is generic and does not show a completed task."})
+    mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
     direct_vm.mock_llm(
         r".*Rubric, total 100.*",
         json.dumps(
@@ -430,13 +459,13 @@ def test_evaluate_rejects_high_score_when_usage_proof_invalid(direct_vm, direct_
     sid = contract.submit_proof(
         cid,
         STAKE,
-        "https://example.com/tx/high-score-invalid-proof",
+        TX_URL,
         "https://example.com/result/high-score-invalid-proof",
         "The product copy is clear and I noticed the completion state should be more explicit.",
     )
     direct_vm.value = 0
 
-    direct_vm.mock_web(r".*", {"status": 200, "body": "Rendered product text, but proof does not show a completed user flow."})
+    mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
     direct_vm.mock_llm(
         r".*Rubric, total 100.*",
         json.dumps(
@@ -468,6 +497,49 @@ def test_evaluate_rejects_high_score_when_usage_proof_invalid(direct_vm, direct_
     assert contract.get_campaign(cid)["reward_pool"] == str(POOL + STAKE)
 
 
+def test_evaluate_uses_rpc_sender_instead_of_llm_identity_claim(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = direct_deploy(CONTRACT)
+    cid = create_demo_campaign(contract, direct_vm)
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = STAKE
+    sid = contract.submit_proof(
+        cid,
+        STAKE,
+        TX_URL,
+        "https://example.com/result/identity-mismatch",
+        "I completed the campaign flow and found the transaction ownership explanation unclear.",
+    )
+    direct_vm.value = 0
+
+    mock_verified_evidence(direct_vm, direct_bob)
+    direct_vm.mock_llm(
+        r".*Rubric, total 100.*",
+        json.dumps(
+            {
+                "score": 90,
+                "transaction_success": True,
+                "identity_match": True,
+                "task_completed": True,
+                "usage_valid": True,
+                "feedback_quality": "HIGH",
+                "proof_score": 38,
+                "feedback_score": 23,
+                "insight_score": 16,
+                "originality_score": 13,
+                "approved": True,
+                "reason_summary": "The submitted proof appears complete.",
+            }
+        ),
+    )
+
+    reviewed = contract.evaluate_submission(sid)
+    assert reviewed["status"] == "REJECTED"
+    assert reviewed["transaction_success"] is True
+    assert reviewed["identity_match"] is False
+    assert reviewed["usage_valid"] is False
+
+
 def test_evaluate_rejects_unrenderable_proof_without_reverting(direct_vm, direct_deploy, direct_alice):
     contract = direct_deploy(CONTRACT)
     cid = create_demo_campaign(contract, direct_vm)
@@ -477,7 +549,7 @@ def test_evaluate_rejects_unrenderable_proof_without_reverting(direct_vm, direct
     sid = contract.submit_proof(
         cid,
         STAKE,
-        "https://example.com/tx/unrenderable",
+        TX_URL,
         "https://example.com/result/unrenderable",
         "I completed the flow and found the confirmation screen unclear after signing.",
     )
@@ -488,7 +560,7 @@ def test_evaluate_rejects_unrenderable_proof_without_reverting(direct_vm, direct
     assert reviewed["status"] == "REJECTED"
     assert reviewed["score"] == 0
     assert reviewed["reward_amount"] == "0"
-    assert "could not be rendered" in reviewed["reason_summary"]
+    assert "could not be verified" in reviewed["reason_summary"]
     assert contract.get_campaign(cid)["reward_pool"] == str(POOL + STAKE)
 
 
@@ -526,12 +598,12 @@ def test_rejected_submission_cannot_claim(direct_vm, direct_deploy, direct_alice
     sid = contract.submit_proof(
         cid,
         STAKE,
-        "https://example.com/tx/0xbad",
+        TX_URL,
         "https://example.com/result/bad",
         "Nice app.",
     )
     direct_vm.value = 0
-    direct_vm.mock_web(r".*", {"status": 200, "body": "Weak proof."})
+    mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
     direct_vm.mock_llm(
         r".*Rubric, total 100.*",
         json.dumps(

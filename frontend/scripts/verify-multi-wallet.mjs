@@ -296,7 +296,9 @@ async function submitProof(client, contractAddress, account, state, fields) {
   const receipt = await waitExecuted(client, hash, `Submit proof: ${fields.label}`);
   const submission = await pollUntil(fields.label, async () => {
     const listed = await read(client, contractAddress, "list_campaign_submissions", [fields.campaignId]);
-    return listed.submissions?.find((item) => item.tester.toLowerCase() === account.address.toLowerCase());
+    return listed.submissions
+      ?.filter((item) => item.tester.toLowerCase() === account.address.toLowerCase())
+      .sort((left, right) => Number(right.submission_id) - Number(left.submission_id))[0];
   });
   return { submission, receipt };
 }

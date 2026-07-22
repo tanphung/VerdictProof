@@ -55,11 +55,17 @@ inspect real evidence and compare it to the campaign:
 - the written feedback's specificity, usefulness, and originality;
 - spam or prompt-injection risk in user-submitted text.
 
-The leader and every validator independently render the transaction and outcome
-evidence and run the same scoring rubric. Consensus requires agreement on the
-material settlement gate: whether the evidence proves valid usage and whether
-the submission is approved or rejected. For valid usage, validators also compare
-the total score within an explicit tolerance and the feedback-quality band.
+The leader and every validator independently call Bradbury's official
+`gen_getTransactionReceipt` RPC method. The contract derives transaction
+success from `status`, consensus `result`, and `txExecutionResult`, and compares
+the receipt sender to the submitting tester wallet. These two evidence gates are
+not delegated to the LLM. Validators then render the public outcome evidence and
+run the same scoring rubric for task completion and feedback quality.
+
+Consensus requires agreement on the material settlement gate: whether the
+evidence proves valid usage and whether the submission is approved or rejected.
+For valid usage, validators also compare the total score within an explicit
+tolerance and the feedback-quality band.
 Differences in prose or allocation of points cannot overturn a shared invalid-
 proof verdict. A correctly shaped JSON response is rejected when its substantive
 decision does not agree with the validator's independent review.
@@ -77,6 +83,10 @@ Each reviewed submission stores the three evidence gates, four rubric scores,
 approval status, evidence summary, recommendation, and risk flags. The frontend
 therefore shows why a verdict settled instead of only displaying an opaque AI
 score or raw transaction.
+
+The RPC and web-access behavior follows the official GenLayer documentation:
+[GenLayer Node transaction receipt](https://docs.genlayer.com/api-references/genlayer-node/gen/gen_getTransactionReceipt)
+and [Intelligent Contract web access](https://docs.genlayer.com/developers/intelligent-contracts/features/web-access).
 
 ## Project Structure
 

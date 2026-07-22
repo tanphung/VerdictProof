@@ -20,6 +20,8 @@ ERR_EXTERNAL = "[EXTERNAL]"
 ERR_TRANSIENT = "[TRANSIENT]"
 ERR_LLM = "[LLM_ERROR]"
 UNAVAILABLE_PREFIX = "[UNAVAILABLE]"
+BRADBURY_RPC_URL = "https://rpc-bradbury.genlayer.com"
+BRADBURY_EXPLORER_TX_PREFIX = "https://explorer-bradbury.genlayer.com/tx/"
 
 STATUS_OPEN = "OPEN"
 STATUS_PAUSED = "PAUSED"
@@ -123,6 +125,73 @@ def _render_text(url: str) -> str:
     except Exception:
         return f"{UNAVAILABLE_PREFIX} could not render {url[:80]}"
     return _clean_text(text, MAX_RENDER_CHARS)
+
+
+def _extract_bradbury_tx_hash(url: str) -> str:
+    if not isinstance(url, str) or not url.startswith(BRADBURY_EXPLORER_TX_PREFIX):
+        return ""
+    tx_hash = url[len(BRADBURY_EXPLORER_TX_PREFIX):].split("?", 1)[0].split("#", 1)[0]
+    if len(tx_hash) != 66 or not tx_hash.startswith("0x"):
+        return ""
+    try:
+        int(tx_hash[2:], 16)
+    except ValueError:
+        return ""
+    return tx_hash.lower()
+
+
+def _decode_calldata_text(raw: typing.Any) -> str:
+    text = str(raw or "")
+    if text.startswith("0x"):
+        text = text[2:]
+    try:
+        decoded = bytes.fromhex(text).decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+    readable = "".join(ch if ch == "\n" or ch == "\t" or ord(ch) >= 32 else " " for ch in decoded)
+    return _clean_text(" ".join(readable.split()), MAX_RENDER_CHARS)
+
+
+def _fetch_bradbury_transaction(url: str) -> typing.Optional[dict]:
+    tx_hash = _extract_bradbury_tx_hash(url)
+    if not tx_hash:
+        return None
+    try:
+        response = gl.nondet.web.request(
+            BRADBURY_RPC_URL,
+            method="POST",
+            body={
+                "jsonrpc": "2.0",
+                "method": "gen_getTransactionReceipt",
+                "params": [{"txId": tx_hash}],
+                "id": 1,
+            },
+        )
+        status_code = int(getattr(response, "status_code", getattr(response, "status", 0)))
+        if status_code < 200 or status_code >= 300:
+            return None
+        body = response.body
+        if isinstance(body, bytes):
+            body = body.decode("utf-8")
+        payload = json.loads(str(body))
+        receipt = payload.get("result")
+        if not isinstance(receipt, dict):
+            return None
+        sender = str(receipt.get("sender", "")).lower()
+        recipient = str(receipt.get("recipient", "")).lower()
+        if not sender.startswith("0x") or len(sender) != 42:
+            return None
+        return {
+            "transaction_hash": tx_hash,
+            "sender": sender,
+            "recipient": recipient,
+            "status": _parse_int(receipt.get("status"), 0, 255),
+            "consensus_result": _parse_int(receipt.get("result"), 0, 255),
+            "execution_result": _parse_int(receipt.get("txExecutionResult"), 0, 255),
+            "calldata_text": _decode_calldata_text(receipt.get("txCallData", "")),
+        }
+    except Exception:
+        return None
 
 
 def _reject_review(score: int, reason: str) -> dict:
@@ -286,16 +355,26 @@ def _score_submission(
     minimum_score: int,
     reward_per_approved: int,
 ) -> dict:
-    transaction_text = _render_text(transaction_url)
+    transaction = _fetch_bradbury_transaction(transaction_url)
     app_result_text = _render_text(app_result_url)
-    if (
-        transaction_text.startswith(UNAVAILABLE_PREFIX)
-        or app_result_text.startswith(UNAVAILABLE_PREFIX)
-    ):
+    if transaction is None:
         return _reject_review(
             0,
-            "Rejected because one or more required proof pages could not be rendered by GenLayer validators.",
+            "Rejected because the Bradbury transaction receipt could not be verified through the official RPC.",
         )
+    if app_result_text.startswith(UNAVAILABLE_PREFIX):
+        return _reject_review(
+            0,
+            "Rejected because the required app outcome page could not be rendered by GenLayer validators.",
+        )
+
+    transaction_success = (
+        int(transaction["status"]) in (5, 7)
+        and int(transaction["consensus_result"]) == 1
+        and int(transaction["execution_result"]) == 1
+    )
+    identity_match = str(transaction["sender"]).lower() == tester_address.lower()
+    transaction_facts = json.dumps(transaction, sort_keys=True)
 
     prompt = f"""
 You are a GenLayer validator reviewing a product testing campaign submission.
@@ -311,8 +390,9 @@ Required proof:
 Product URL:
 {product_url}
 
-Transaction proof page text:
-{transaction_text}
+Authoritative Bradbury transaction receipt facts (fetched directly from the
+official GenLayer RPC by this contract):
+{transaction_facts}
 
 App result page text:
 {app_result_text}
@@ -330,12 +410,11 @@ Rubric, total 100:
 - Originality / non-spam, originality_score: 0..15.
 
 Evaluate rigorously:
-- transaction_success is true only when the transaction evidence visibly shows a
-  successful or finalized execution, rather than merely submitted or accepted with
-  an execution error.
-- identity_match is true only when the transaction sender/from address visibly
-  matches the expected tester wallet above. Never infer identity from the tester's
-  written claim alone.
+- transaction_success is fixed to {transaction_success}. It is true only when the
+  official receipt status is ACCEPTED or FINALIZED, consensus result is AGREE, and
+  txExecutionResult is FINISHED_WITH_RETURN.
+- identity_match is fixed to {identity_match}. It is true only when the official
+  receipt sender matches the expected tester wallet above.
 - task_completed is true only when the rendered transaction and outcome evidence
   together demonstrate the campaign task. A generic product homepage is not outcome
   evidence.
@@ -373,6 +452,8 @@ Approval must require usage_valid true and score >= {minimum_score}.
         data = _clean_json(out)
     except Exception:
         return _reject_review(0, "Rejected because AI review could not produce a valid structured result.")
+    data["transaction_success"] = transaction_success
+    data["identity_match"] = identity_match
     return _normalize_review(data, minimum_score, reward_per_approved)
 
 
@@ -533,8 +614,8 @@ class VerdictProof(gl.Contract):
         tx_url = _clean_text(transaction_url, MAX_URL_CHARS)
         result_url = _clean_text(app_result_url, MAX_URL_CHARS)
         feedback = _guard_user_text(feedback_text, "feedback_text", MAX_TEXT_CHARS)
-        if not _is_http_url(tx_url):
-            raise gl.vm.UserError(f"{ERR_EXPECTED} transaction_url must be http(s)")
+        if not _extract_bradbury_tx_hash(tx_url):
+            raise gl.vm.UserError(f"{ERR_EXPECTED} transaction_url must be a Bradbury explorer transaction")
         if not _is_http_url(result_url):
             raise gl.vm.UserError(f"{ERR_EXPECTED} app_result_url must be http(s)")
 

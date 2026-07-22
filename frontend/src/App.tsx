@@ -66,6 +66,7 @@ const defaultProofForm: ProofForm = {
 };
 
 const ATTO_PER_GEN = 10n ** 18n;
+const BRADBURY_TRANSACTION_URL = /^https:\/\/explorer-bradbury\.genlayer\.com\/tx\/0x[a-fA-F0-9]{64}(?:[?#].*)?$/;
 
 type ChainCampaign = {
   campaign_id: number | string | bigint;
@@ -300,6 +301,10 @@ function compactUrlLabel(url: string) {
   } catch {
     return url.length > 28 ? `${url.slice(0, 25)}...` : url;
   }
+}
+
+function isBradburyTransactionUrl(url: string) {
+  return BRADBURY_TRANSACTION_URL.test(url.trim());
 }
 
 function contractShortLabel() {
@@ -853,6 +858,10 @@ function App() {
   async function submitProof(event: FormEvent) {
     event.preventDefault();
     if (!selectedCampaign) return;
+    if (!isBradburyTransactionUrl(proofForm.transactionUrl)) {
+      setNotice("Use a complete Bradbury explorer transaction URL so validators can verify execution and wallet ownership.");
+      return;
+    }
     if (!requireLiveWallet("stake GEN and submit proof")) return;
     const nextId = Math.max(...submissions.map((submission) => submission.submissionId), 0) + 1;
     setBusy("submit");
@@ -1424,6 +1433,8 @@ function CampaignDetail({
             <input
               spellCheck={false}
               required
+              pattern="https://explorer-bradbury\\.genlayer\\.com/tx/0x[a-fA-F0-9]{64}.*"
+              title="Use a complete Bradbury explorer transaction URL."
               placeholder="https://explorer-bradbury.genlayer.com/tx/..."
               value={proofForm.transactionUrl}
               onChange={(event) => setProofForm({ ...proofForm, transactionUrl: event.target.value })}

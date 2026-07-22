@@ -12,6 +12,7 @@ from gltest.assertions import tx_execution_succeeded, tx_execution_failed
 POOL = 5 * 10**17
 REWARD = 5 * 10**16
 STAKE = 10**16
+BRADBURY_TX_URL = "https://explorer-bradbury.genlayer.com/tx/0x760c748dbd931513d4f741f8323d30e050df431f6fd1f439389a4b1f5d430cb7"
 
 
 def test_create_campaign_and_reject_bad_submit():
@@ -70,7 +71,7 @@ def test_submit_proof_success_and_exact_stake_required():
         args=[
             1,
             STAKE - 1,
-            "https://example.com/tx/0xwrongstake",
+            BRADBURY_TX_URL,
             "https://example.com/result/wrongstake",
             "I completed the flow and found one specific confirmation issue.",
         ]
@@ -81,7 +82,7 @@ def test_submit_proof_success_and_exact_stake_required():
         args=[
             1,
             STAKE,
-            "https://example.com/tx/0xsuccess",
+            BRADBURY_TX_URL,
             "https://example.com/result/success",
             "I completed the flow and found the confirmation screen unclear after signing.",
         ]
@@ -115,7 +116,7 @@ def test_ai_review_reaches_consensus_on_public_evidence():
         args=[
             1,
             STAKE,
-            "https://example.com/",
+            BRADBURY_TX_URL,
             "https://www.iana.org/help/example-domains",
             "The submitted pages do not prove a completed VerdictProof campaign flow, so this evidence should be rejected.",
         ]
