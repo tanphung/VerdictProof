@@ -3,8 +3,8 @@
 Deploy with the GenLayer CLI after lint and tests pass.
 
 ```bash
-genvm-lint check contracts/verdict_proof.py
-gltest tests/direct/ -v
+genvm-lint check contracts/verdict_proof.py --json
+pytest tests/direct/ -v
 gltest tests/integration/ -v -s --network studionet
 ```
 
@@ -12,7 +12,7 @@ Then use the GenLayer CLI workflow for the target environment. After deploy,
 set the frontend environment variable:
 
 ```bash
-VITE_VERDICTPROOF_CONTRACT_ADDRESS=<deployed-contract-address>
+VITE_VERDICTPROOF_CONTRACT_ADDRESS=0x8B9f38f52C82a333c46f1061bE242A9A880E6b0e
 ```
 
 Do not use `genlayernode` for this dApp unless validator node setup is
@@ -66,7 +66,8 @@ npm run verify:bradbury
 ```
 
 This creates one sponsor-funded audit, one wallet-owned valid proof, one
-borrowed-transaction invalid proof, a validator verdict for each, and a real reward
-claim. A successful run writes public addresses, verdicts, and explorer links
+transaction-ownership integrity check, a validator verdict for each, and a real
+reward claim. A successful run requires consensus `AGREE` plus execution
+`FINISHED_WITH_RETURN` and writes public addresses, verdicts, and explorer links
 to `deploy\latest-bradbury-verification.json`; private keys are never written
 to the report.

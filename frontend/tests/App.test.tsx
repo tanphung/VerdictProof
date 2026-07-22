@@ -177,6 +177,16 @@ describe("VerdictProof app live wallet flow", () => {
     expect(screen.getByRole("button", { name: /Disconnect/i })).toBeInTheDocument();
   });
 
+  it("shows wallet feedback from the claims view", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /^Claims$/i }));
+    await user.click(screen.getByRole("button", { name: /Connect Wallet/i }));
+
+    expect(await screen.findByText("Wallet ready on Bradbury. Live campaigns refreshed.")).toBeInTheDocument();
+  });
+
   it("connects wallets announced through EIP-6963 provider discovery", async () => {
     const user = userEvent.setup();
     uninstallWindowEthereum();

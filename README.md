@@ -11,8 +11,9 @@ slash outcome.
 ## Live Deployment
 
 - App: https://verdictproof.vercel.app/
-- Bradbury contract: `0xa7eBc3913B9d221fDAa9C3Eb5738D2FC26a6A524`
-- Explorer: https://explorer-bradbury.genlayer.com/address/0xa7eBc3913B9d221fDAa9C3Eb5738D2FC26a6A524
+- Bradbury contract: `0x8B9f38f52C82a333c46f1061bE242A9A880E6b0e`
+- Contract explorer: https://explorer-bradbury.genlayer.com/address/0x8B9f38f52C82a333c46f1061bE242A9A880E6b0e
+- Deployment transaction: https://explorer-bradbury.genlayer.com/tx/0xba830da5325a0602f501a90a7940b4e0505342d90b8c4d8c5291eea603ea8463
 
 ```text
 Project funds campaign
@@ -27,7 +28,7 @@ Project funds campaign
 VerdictProof relies on a real Intelligent Contract because the main workflow
 requires subjective, evidence-based judgment:
 
-- read product and proof URLs;
+- read the campaign brief and render submitted proof URLs;
 - verify whether the tester completed the requested task;
 - judge whether feedback is specific, useful, and original;
 - settle a reward/slash outcome on-chain.
@@ -45,7 +46,7 @@ whether GEN stake is returned, rewarded, or slashed.
 The review is not a format check. A useful verdict requires the contract to
 inspect real evidence and compare it to the campaign:
 
-- the campaign product URL and task instruction;
+- the campaign product URL, task instruction, and proof requirement;
 - the tester's proof or transaction URL;
 - the submitted outcome evidence URL;
 - whether the transaction reached a successful execution result;
@@ -54,11 +55,14 @@ inspect real evidence and compare it to the campaign:
 - the written feedback's specificity, usefulness, and originality;
 - spam or prompt-injection risk in user-submitted text.
 
-The leader and every validator independently render the same public evidence
-and run the same scoring rubric. The validator compares usage validity,
-approval, total score, and each rubric component with explicit tolerances.
-A correctly shaped JSON response is rejected when its substantive decision
-does not agree with the validator's independent review.
+The leader and every validator independently render the transaction and outcome
+evidence and run the same scoring rubric. Consensus requires agreement on the
+material settlement gate: whether the evidence proves valid usage and whether
+the submission is approved or rejected. For valid usage, validators also compare
+the total score within an explicit tolerance and the feedback-quality band.
+Differences in prose or allocation of points cannot overturn a shared invalid-
+proof verdict. A correctly shaped JSON response is rejected when its substantive
+decision does not agree with the validator's independent review.
 
 Campaign funding and tester stake are also enforced against the exact
 `gl.message.value` received by each payable method. Declared pool or stake
@@ -86,28 +90,28 @@ VerdictProof is designed to run as a live Bradbury dApp. The frontend reads
 campaigns and submissions from the deployed Intelligent Contract; it does not
 ship hardcoded campaign or submission rows in production.
 
-Example campaign title:
+One live campaign brief:
 
 ```text
-Checkout QA Campaign
+First-Time Sponsor Campaign Launch Study
 ```
 
-Example product URL:
+Live product URL:
 
 ```text
-https://your-product.example/checkout
+https://verdictproof.vercel.app/
 ```
 
-Example task:
+Task:
 
 ```text
-Complete checkout, capture the transaction and outcome evidence URLs, and report one concrete wallet confirmation issue.
+Create a funded Bradbury campaign from the tester wallet, verify it appears on the live board, and report whether signing, transaction visibility, pool funding, and proof requirements are understandable.
 ```
 
 Required proof:
 
 ```text
-Transaction URL, outcome evidence URL, written feedback.
+An accepted Bradbury create-campaign transaction whose sender matches the tester wallet, the live campaign outcome URL, and specific written feedback.
 ```
 
 Default campaign values:
@@ -197,9 +201,10 @@ cd frontend
 npm run verify:bradbury
 ```
 
-The verification uses distinct sponsor, approved-tester, and rejected-tester
-wallets. It requires every transaction to reach `ACCEPTED` or `FINALIZED` with
-`FINISHED_WITH_RETURN`, verifies one reward claim and one slash, and writes a
+The verification uses distinct sponsor, approved-tester, and integrity-check
+tester wallets. It requires every transaction to reach `ACCEPTED` or `FINALIZED`
+with consensus result `AGREE` and execution `FINISHED_WITH_RETURN`; `NO_MAJORITY`
+is a failed verification. It verifies one reward claim and one slash, and writes a
 public transaction report to `deploy/latest-bradbury-verification.json` without
 including private keys.
 
@@ -222,7 +227,7 @@ npm run build
 Copy `frontend/.env.example` to `frontend/.env` after deployment:
 
 ```bash
-VITE_VERDICTPROOF_CONTRACT_ADDRESS=<deployed-contract-address>
+VITE_VERDICTPROOF_CONTRACT_ADDRESS=0x8B9f38f52C82a333c46f1061bE242A9A880E6b0e
 VITE_VERDICTPROOF_CHAIN=bradbury
 VITE_GENLAYER_EXPLORER=https://explorer-bradbury.genlayer.com
 ```

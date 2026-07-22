@@ -1011,16 +1011,13 @@ function App() {
           })}
         </section>
 
-        <div className="notice-row protocol-notice">
-          <p>{notice}</p>
-          <div className="notice-actions">
-            <TxInlineLinks tx={latestTx} />
-            <button className="secondary-button" onClick={refreshOnchain} disabled={busy === "refresh"}>
-              {busy === "refresh" ? <Loader2 className="spin" size={15} /> : <Eye size={15} />}
-              Refresh on-chain
-            </button>
-          </div>
-        </div>
+        <NoticeBar
+          notice={notice}
+          latestTx={latestTx}
+          refreshing={busy === "refresh"}
+          onRefresh={refreshOnchain}
+          className="protocol-notice"
+        />
 
         <div className="section-kicker" id="campaigns">
           <div>
@@ -1088,16 +1085,7 @@ function App() {
               title="Judge pending product feedback."
               body={`${pendingReviewSubmissions.length} pending submission${pendingReviewSubmissions.length === 1 ? "" : "s"} awaiting GenLayer AI review.`}
             />
-            <div className="notice-row">
-              <p>{notice}</p>
-              <div className="notice-actions">
-                <TxInlineLinks tx={latestTx} />
-                <button className="secondary-button" onClick={refreshOnchain} disabled={busy === "refresh"}>
-                  {busy === "refresh" ? <Loader2 className="spin" size={15} /> : <Eye size={15} />}
-                  Refresh on-chain
-                </button>
-              </div>
-            </div>
+            <NoticeBar notice={notice} latestTx={latestTx} refreshing={busy === "refresh"} onRefresh={refreshOnchain} />
             <div className="review-view-grid">
               {selectedCampaign ? (
                 <CampaignDetail
@@ -1134,6 +1122,7 @@ function App() {
               title="AI verdict history and protocol health."
               body="Every reviewed submission below is read from the Bradbury contract and includes the Intelligent Contract's evidence summary and recommendation."
             />
+            <NoticeBar notice={notice} latestTx={latestTx} refreshing={busy === "refresh"} onRefresh={refreshOnchain} />
             <section className="stats-grid">
               {stats.map((stat) => {
                 const Icon = stat.icon;
@@ -1171,6 +1160,7 @@ function App() {
               title="Rewards, stake returns, and slashes."
               body="Track your own submissions and claim approved stake plus reward when the contract unlocks payout."
             />
+            <NoticeBar notice={notice} latestTx={latestTx} refreshing={busy === "refresh"} onRefresh={refreshOnchain} />
             <div className="claims-view-grid">
               <MySubmissions submissions={mySubmissions} onClaim={claimReward} busy={busy} />
             </div>
@@ -1198,6 +1188,33 @@ function ViewHeader({ eyebrow, title, body }: { eyebrow: string; title: string; 
       <span>{eyebrow}</span>
       <h2>{title}</h2>
       <p>{body}</p>
+    </div>
+  );
+}
+
+function NoticeBar({
+  notice,
+  latestTx,
+  refreshing,
+  onRefresh,
+  className = ""
+}: {
+  notice: string;
+  latestTx: ActiveTx | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+  className?: string;
+}) {
+  return (
+    <div className={`notice-row ${className}`.trim()} role="status" aria-live="polite">
+      <p>{notice}</p>
+      <div className="notice-actions">
+        <TxInlineLinks tx={latestTx} />
+        <button className="secondary-button" onClick={onRefresh} disabled={refreshing}>
+          {refreshing ? <Loader2 className="spin" size={15} /> : <Eye size={15} />}
+          Refresh on-chain
+        </button>
+      </div>
     </div>
   );
 }
@@ -1531,7 +1548,7 @@ function TxInlineLinks({ tx }: { tx: ActiveTx | null }) {
 
 function ReviewLifecycle() {
   const steps = [
-    { title: "Read product URL", body: "Validators render the product page as neutral evidence.", icon: FileSearch },
+    { title: "Read campaign brief", body: "Validators compare the task and proof requirements with submitted evidence.", icon: FileSearch },
     { title: "Read proof URL", body: "Transaction and result links are checked against the campaign task.", icon: Network },
     { title: "Analyze feedback", body: "Specificity, usefulness, and spam signals are scored.", icon: BrainCircuit },
     { title: "Consensus score", body: "GenLayer compares validator judgments around the approval threshold.", icon: Gauge },

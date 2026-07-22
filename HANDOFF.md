@@ -7,8 +7,8 @@ Updated: 2026-07-22 (Asia/Bangkok)
 - Workspace boundary: only modify files inside `D:\app genlayer\VerdictProof`.
 - Repository: `https://github.com/tanphung/VerdictProof.git`
 - Production app: `https://verdictproof.vercel.app/`
-- Bradbury contract: `0x629Daff64AEd536A1593930bDB3651543138dE2A`
-- Contract deploy transaction: `0x84f6b0512470bb8296caaa5ecf23158d3dfb02f148f580b721c8289627dde4e4`
+- Bradbury contract: `0x8B9f38f52C82a333c46f1061bE242A9A880E6b0e`
+- Contract deploy transaction: `0xba830da5325a0602f501a90a7940b4e0505342d90b8c4d8c5291eea603ea8463`
 - Latest code checkpoint before this handoff: `ac66946`
 - Never commit `.env`, `frontend/.env`, private keys, keystore passwords, or `deploy/.bradbury-verification-state.json`.
 
@@ -16,24 +16,24 @@ Updated: 2026-07-22 (Asia/Bangkok)
 
 The verification script is resumable. Run it again from `frontend/`; it will reuse the saved hashes and must not submit duplicate transactions.
 
-Successful (`ACCEPTED`, `FINISHED_WITH_RETURN`):
+Successful (`ACCEPTED`, `AGREE`, `FINISHED_WITH_RETURN`) on the final contract:
 
 1. Create `First-Time Sponsor Campaign Launch Study`:
-   `0xb40c0f5244e33bedcfb6f612afc2a60c25f4fe80a1b501434a6326c2365adf05`
+   `0xecc40c02cac4c9488398ae46d18d77eef0c078b5f0f0a4fbe894edb9072c054a`
 2. Create `Verdict and Transaction Clarity Study`:
-   `0x7d2e6a949d4299ea2deb62e7bf7770735981186d24f46550ca1f2de6823c611a`
+   `0x760c748dbd931513d4f741f8323d30e050df431f6fd1f439389a4b1f5d430cb7`
 3. Submit wallet-owned evidence:
-   `0xdc8dbf11601277943a5ddc4f70b8c62e165b35f8584326891df2d113a511edf6`
+   `0x9ad65c10ed886c0be6fcc2a5a3dcb5da5d4b67125cdfd07b2d889f7cff41d8bd`
 4. Submit identity-mismatched evidence:
-   `0x70b94ece460cc60aac041d0384427843d818f499086f90acfe0c699c1afffc1f`
-5. AI review of wallet-owned evidence:
-   `0x8bb9f4a347867ae02429fcb94184699e0b0c7c7f83b09c10f5734224ef3fc7e2`
+   `0x9d5e437f84a394a8fe8027aa1a4c84126b4ba1a55a4a936751624274fd948d5e`
 
 Still in validator consensus when work paused:
 
-- AI review of identity-mismatched evidence:
-  `0xaf595bbaba7a221a25d03db8e23dd1d1cb027d1f3dc4a41e1278c0628d87e729`
-- Last observed lifecycle: `COMMITTING / NOT_VOTED` after an additional consensus round.
+- AI review of wallet-owned evidence:
+  `0xd6814808eea761e53ffed840ebbe1a4106776af247c9f813ee4608b78e2f1dce`
+- The explorer showed two automatic leader-timeout rotations before the active
+  consensus round. Do not resend; resume the checkpointed verifier and require
+  terminal `AGREE` plus `FINISHED_WITH_RETURN` before accepting the verdict.
 
 ## Resume Plan
 
