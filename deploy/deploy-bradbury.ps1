@@ -78,6 +78,7 @@ function Invoke-LoggedCommand {
   $process.WaitForExit()
 
   $output = ($stdout + "`n" + $stderr).Trim()
+  $script:LastCommandOutput = $output
   if ($output) {
     Write-Host $output
   }
@@ -180,7 +181,22 @@ if ($expectedWallet -and $accountOutput -notmatch [regex]::Escape($expectedWalle
   throw "Active account does not match EXPECTED_WALLET_ADDRESS=$expectedWallet. Stop before deploy."
 }
 
-$deployOutput = Invoke-LoggedCommand -FilePath $genlayerCommand -Arguments @("deploy", "--contract", $ContractPath) -InputText $accountPassword
+$deployOutput = $null
+for ($deployAttempt = 1; $deployAttempt -le 4; $deployAttempt++) {
+  try {
+    $deployOutput = Invoke-LoggedCommand -FilePath $genlayerCommand -Arguments @("deploy", "--contract", $ContractPath) -InputText $accountPassword
+    break
+  } catch {
+    $isBackpressure = $script:LastCommandOutput -match "pipeline backpressure|not currently accepting transactions|l1_sender_commit"
+    $hasTransactionHash = $script:LastCommandOutput -match "Transaction Hash"
+    if (-not $isBackpressure -or $hasTransactionHash -or $deployAttempt -eq 4) {
+      throw
+    }
+    $delaySeconds = 15 * $deployAttempt
+    Write-Host "Bradbury pipeline backpressure; retrying deploy in $delaySeconds seconds."
+    Start-Sleep -Seconds $delaySeconds
+  }
+}
 $contractAddress = Find-ContractAddress -DeployOutput $deployOutput
 
 if (-not $contractAddress) {
