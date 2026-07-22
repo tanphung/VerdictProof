@@ -10,6 +10,7 @@ const ATTO = 10n ** 18n;
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXPLORER = "https://explorer-bradbury.genlayer.com";
 const APP_URL = "https://verdictproof.vercel.app/";
+const INITIAL_VALIDATORS = 3n;
 const VERIFICATION_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-verification-state.json");
 const publicClient = createPublicClient({
   chain: testnetBradbury,
@@ -122,7 +123,7 @@ async function sendContractWrite({ account, address, functionName, args = [], va
   const baseArgs = [
     account.address,
     address,
-    BigInt(testnetBradbury.defaultNumberOfInitialValidators ?? 5),
+    INITIAL_VALIDATORS,
     BigInt(testnetBradbury.defaultConsensusMaxRotations ?? 3),
     transactionData
   ];

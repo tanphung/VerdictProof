@@ -164,6 +164,7 @@ describe("genlayer frontend helpers", () => {
     });
     expect(decoded.functionName).toBe("addTransaction");
     expect(decoded.args ?? []).toHaveLength(6);
+    expect(decoded.args?.[2]).toBe(3n);
     expect(typeof decoded.args?.[5]).toBe("bigint");
   });
 

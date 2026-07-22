@@ -18,6 +18,7 @@ export const CONTRACT_ADDRESS = runtimeConfig?.contractAddress || import.meta.en
 export const EXPLORER =
   runtimeConfig?.explorer || import.meta.env.VITE_GENLAYER_EXPLORER || "https://explorer-bradbury.genlayer.com";
 export const CHAIN = testnetBradbury;
+export const INITIAL_VALIDATORS = 3n;
 
 export type Eip1193Provider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -287,7 +288,7 @@ function getConsensusAddTransactionArgs(walletAddress: string, functionName: str
   return [
     walletAddress,
     CONTRACT_ADDRESS,
-    BigInt(CHAIN.defaultNumberOfInitialValidators ?? 5),
+    INITIAL_VALIDATORS,
     BigInt(CHAIN.defaultConsensusMaxRotations ?? 3),
     calldata
   ];
@@ -395,7 +396,7 @@ export async function getTransactionStatus(hash: string): Promise<TxStatus> {
 
   const round = tx.consensus_data?.leader_receipt?.[0] ?? tx.lastRound ?? null;
   const votes = round?.validatorVotesName ?? [];
-  const validatorsTotal = Math.max(votes.length, round?.roundValidators?.length ?? 5);
+  const validatorsTotal = Math.max(votes.length, round?.roundValidators?.length ?? Number(INITIAL_VALIDATORS));
   const validatorsAgreed = votes.filter((vote) => vote === "AGREE").length;
   const statusName = String(tx.status_name ?? tx.statusName ?? tx.status ?? "PENDING").toUpperCase();
   const resultName = String(tx.result_name ?? tx.resultName ?? "").toUpperCase();

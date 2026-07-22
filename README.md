@@ -64,6 +64,11 @@ Differences in prose or allocation of points cannot overturn a shared invalid-
 proof verdict. A correctly shaped JSON response is rejected when its substantive
 decision does not agree with the validator's independent review.
 
+Bradbury writes request three initial validators and allow the network's three
+consensus rotations. This preserves independent multi-validator judgment while
+avoiding a single unavailable validator keeping a product review pending for an
+entire transaction validity window.
+
 Campaign funding and tester stake are also enforced against the exact
 `gl.message.value` received by each payable method. Declared pool or stake
 amounts cannot create unbacked accounting entries.
