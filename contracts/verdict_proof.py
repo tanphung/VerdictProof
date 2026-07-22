@@ -32,10 +32,6 @@ ONE_GEN_ATTO = 10**18
 MIN_POOL_ATTO = 10**17
 MAX_POOL_ATTO = 10**18
 DEFAULT_SCORE_TOLERANCE = 15
-PROOF_SCORE_TOLERANCE = 10
-FEEDBACK_SCORE_TOLERANCE = 8
-INSIGHT_SCORE_TOLERANCE = 7
-ORIGINALITY_SCORE_TOLERANCE = 6
 
 MAX_TITLE_CHARS = 120
 MAX_URL_CHARS = 500
@@ -253,26 +249,25 @@ def _reviews_equivalent(
     if not _valid_review_payload(validator, minimum_score, reward_per_approved):
         return False
 
-    if _parse_bool(leader.get("usage_valid")) != _parse_bool(validator.get("usage_valid")):
+    leader_usage_valid = _parse_bool(leader.get("usage_valid"))
+    validator_usage_valid = _parse_bool(validator.get("usage_valid"))
+    if leader_usage_valid != validator_usage_valid:
         return False
-    if _parse_bool(leader.get("approved")) != _parse_bool(validator.get("approved")):
+    leader_approved = _parse_bool(leader.get("approved"))
+    validator_approved = _parse_bool(validator.get("approved"))
+    if leader_approved != validator_approved:
         return False
-    for field in ("transaction_success", "identity_match", "task_completed"):
-        if _parse_bool(leader.get(field)) != _parse_bool(validator.get(field)):
-            return False
 
-    comparisons = (
-        ("score", DEFAULT_SCORE_TOLERANCE),
-        ("proof_score", PROOF_SCORE_TOLERANCE),
-        ("feedback_score", FEEDBACK_SCORE_TOLERANCE),
-        ("insight_score", INSIGHT_SCORE_TOLERANCE),
-        ("originality_score", ORIGINALITY_SCORE_TOLERANCE),
-    )
-    for field, tolerance in comparisons:
-        left = _parse_int(leader.get(field), 0, 100)
-        right = _parse_int(validator.get(field), 0, 100)
-        if abs(left - right) > tolerance:
-            return False
+    # Independent validators must agree on the settlement gate. Once both find
+    # usage evidence invalid, differences in which failed fact was most salient
+    # or how rubric points were distributed cannot change the slash outcome.
+    if not leader_usage_valid:
+        return not leader_approved
+
+    leader_score = _parse_int(leader.get("score"), 0, 100)
+    validator_score = _parse_int(validator.get("score"), 0, 100)
+    if abs(leader_score - validator_score) > DEFAULT_SCORE_TOLERANCE:
+        return False
 
     quality_rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
     leader_quality = quality_rank.get(str(leader.get("feedback_quality", "")).upper(), -10)

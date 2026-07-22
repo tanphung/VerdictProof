@@ -226,8 +226,9 @@ async function waitExecuted(client, hash, label) {
     }
 
     const executionFailed = /ERROR|REVERT|FAILED/.test(executionResultName) || /ERROR|REVERT|FAILED/.test(resultName);
+    const consensusFailed = /NO_MAJORITY|DISAGREE|UNDETERMINED|CANCELED/.test(resultName);
     const lifecycleFailed = /UNDETERMINED|CANCELED/.test(statusName);
-    if (executionFailed || lifecycleFailed) {
+    if (executionFailed || consensusFailed || lifecycleFailed) {
       throw new Error(`${label} failed: ${state}`);
     }
     if (/ACCEPTED|FINALIZED/.test(statusName) && executionResultName === "FINISHED_WITH_RETURN") {
@@ -382,12 +383,12 @@ async function main() {
 
   const rejectedSubmission = await submitProof(client, contractAddress, rejectedTester.account, state, {
     txKey: "submitRejectedEvidence",
-    label: "borrowed sponsor transaction evidence",
+    label: "transaction ownership integrity evidence",
     campaignId: primaryId,
     stake: gen(0.02),
     transactionUrl: txUrl(primary.receipt.hash),
     outcomeUrl: `${APP_URL}?view=campaigns&campaign=${primaryId}`,
-    feedback: "I inspected the campaign card and its funding details, but this submission intentionally references the sponsor's create transaction instead of a transaction sent by my tester wallet. VerdictProof should reject this evidence because transaction ownership is part of the campaign requirement. A useful pre-submit improvement would be an early warning when the evidence sender differs from the connected wallet."
+    feedback: "While auditing the campaign card and its funding details, I used the campaign funding receipt as my evidence link. That receipt belongs to the sponsor rather than my connected tester wallet, so it does not prove that I completed the requested creation flow. The submission form should identify this ownership mismatch before stake is committed and explain which wallet must appear as the transaction sender."
   });
 
   const approvedReview = await reviewSubmission(
@@ -412,7 +413,7 @@ async function main() {
     sponsor.account,
     state,
     BigInt(rejectedSubmission.submission.submission_id),
-    "borrowed transaction evidence",
+    "transaction ownership integrity evidence",
     "reviewRejectedEvidence"
   );
   if (rejectedReview.submission.status !== "REJECTED" || rejectedReview.submission.identity_match) {

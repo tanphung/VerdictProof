@@ -394,9 +394,14 @@ export async function getTransactionStatus(hash: string): Promise<TxStatus> {
     executionResultName.includes("ERROR") ||
     executionResultName.includes("REVERT") ||
     executionResultName.includes("FAILED");
+  const hasConsensusFailure =
+    resultName.includes("NO_MAJORITY") ||
+    resultName.includes("DISAGREE") ||
+    resultName.includes("UNDETERMINED") ||
+    resultName.includes("CANCELED");
 
   let stage: TxStage = "pending";
-  if (hasExecutionFailure || resultName.includes("ERROR") || resultName.includes("REVERT") || resultName.includes("FAILED")) stage = "failed";
+  if (hasExecutionFailure || hasConsensusFailure || resultName.includes("ERROR") || resultName.includes("REVERT") || resultName.includes("FAILED")) stage = "failed";
   else if (statusName.includes("UNDETERMINED") || statusName.includes("CANCELED")) stage = "failed";
   else if (statusName.includes("FINALIZED") && executionResultName === "FINISHED_WITH_RETURN") stage = "finalized";
   else if (statusName.includes("ACCEPTED") && executionResultName === "FINISHED_WITH_RETURN") stage = "accepted";

@@ -225,4 +225,19 @@ describe("genlayer frontend helpers", () => {
     expect(status.resultName).toBe("AGREE");
     expect(status.executionResultName).toBe("ERROR");
   });
+
+  it("treats finalized no-majority consensus as failed", async () => {
+    const { getTransactionStatus } = await import("../src/lib/genlayer");
+    getTransaction.mockResolvedValueOnce({
+      status_name: "FINALIZED",
+      result_name: "NO_MAJORITY",
+      txExecutionResultName: "FINISHED_WITH_RETURN"
+    });
+
+    const status = await getTransactionStatus("0xhash");
+
+    expect(status.stage).toBe("failed");
+    expect(status.statusName).toBe("FINALIZED");
+    expect(status.resultName).toBe("NO_MAJORITY");
+  });
 });
