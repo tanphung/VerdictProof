@@ -86,7 +86,7 @@ async function writeWithRetry(label, request, attempts = 4) {
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
-      const retryable = /timeout|pending|rate limit|too many|429|-32429/i.test(message);
+      const retryable = /timeout|pending|rate limit|too many|429|-32429|pipeline backpressure|not currently accepting transactions|l1_sender_commit/i.test(message);
       if (!retryable || attempt === attempts) break;
       const delayMs = 15000 * attempt;
       console.log(`${label}: transient write failure, retrying in ${delayMs / 1000}s`);
