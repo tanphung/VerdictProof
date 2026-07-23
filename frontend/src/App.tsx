@@ -1269,9 +1269,27 @@ function ReviewHistory({ submissions }: { submissions: Submission[] }) {
               </div>
               <p className="reason">{submission.reasonSummary}</p>
               <div className="verification-grid" aria-label="Verified on-chain evidence checks">
-                <VerificationFact label="Transaction finalized" passed={submission.transactionSuccess} />
-                <VerificationFact label="Tester wallet matched" passed={submission.identityMatch} />
-                <VerificationFact label="Task completion proven" passed={submission.taskCompleted} />
+                <VerificationFact
+                  label="Transaction receipt"
+                  detail={submission.transactionSuccess
+                    ? "Consensus agreed and execution returned successfully."
+                    : "The proof receipt did not reach a successful final execution."}
+                  passed={submission.transactionSuccess}
+                />
+                <VerificationFact
+                  label="Tester wallet ownership"
+                  detail={submission.identityMatch
+                    ? `Receipt sender matches tester ${shortAddress(submission.tester)}.`
+                    : `Receipt sender does not match tester ${shortAddress(submission.tester)}.`}
+                  passed={submission.identityMatch}
+                />
+                <VerificationFact
+                  label="Campaign task evidence"
+                  detail={submission.taskCompleted
+                    ? "Outcome URL, receipt method, and feedback prove the requested flow."
+                    : "Outcome evidence does not prove the requested campaign flow."}
+                  passed={submission.taskCompleted}
+                />
               </div>
               <div className="rubric-grid" aria-label="GenLayer review score breakdown">
                 <RubricScore label="Proof" value={submission.proofScore} maximum={40} />
@@ -1325,12 +1343,15 @@ function ReviewHistory({ submissions }: { submissions: Submission[] }) {
   );
 }
 
-function VerificationFact({ label, passed }: { label: string; passed: boolean }) {
+function VerificationFact({ label, detail, passed }: { label: string; detail: string; passed: boolean }) {
   return (
-    <span className={passed ? "verification-fact passed" : "verification-fact failed"}>
+    <div className={passed ? "verification-fact passed" : "verification-fact failed"}>
       {passed ? <CheckCircle2 size={14} /> : <X size={14} />}
-      {label}
-    </span>
+      <div>
+        <strong>{label}</strong>
+        <small>{detail}</small>
+      </div>
+    </div>
   );
 }
 
