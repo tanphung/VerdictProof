@@ -12,7 +12,7 @@ Then use the GenLayer CLI workflow for the target environment. After deploy,
 set the frontend environment variable:
 
 ```bash
-VITE_VERDICTPROOF_CONTRACT_ADDRESS=0x8B9f38f52C82a333c46f1061bE242A9A880E6b0e
+VITE_VERDICTPROOF_CONTRACT_ADDRESS=0x52fe4d8dA220A8b7DC63Ed2fDE9532642AAb4c7e
 ```
 
 Do not use `genlayernode` for this dApp unless validator node setup is
@@ -49,25 +49,19 @@ The helper sets the GenLayer CLI network to `testnet-bradbury`, imports/uses the
 account, deploys `contracts/verdict_proof.py`, and writes the deployed contract
 address into `frontend\.env`.
 
-After deployment, run a real Bradbury smoke test from the frontend directory:
+The current verified Bradbury deployment is
+`0x52fe4d8dA220A8b7DC63Ed2fDE9532642AAb4c7e`:
+https://explorer-bradbury.genlayer.com/address/0x52fe4d8dA220A8b7DC63Ed2fDE9532642AAb4c7e
 
-```powershell
-npm run smoke:bradbury
-```
-
-The smoke script reads the gitignored root `.env`, signs with the local private
-key, creates a real campaign, stakes proof, requests a consensus verdict, and claims when the
-submission is approved. It never prints the private key.
-
-For the submission-quality verification, use the three distinct funded wallets:
+For real Bradbury verification, use the three distinct funded wallets:
 
 ```powershell
 npm run verify:bradbury
 ```
 
-This creates one sponsor-funded audit, one wallet-owned valid proof, one
-transaction-ownership integrity check, a validator verdict for each, and a real
-reward claim. A successful run requires consensus `AGREE` plus execution
-`FINISHED_WITH_RETURN` and writes public addresses, verdicts, and explorer links
-to `deploy\latest-bradbury-verification.json`; private keys are never written
-to the report.
+This creates two purposeful sponsor-funded campaigns, one wallet-owned valid
+proof, one transaction-ownership integrity check, a detailed validator verdict
+for each, and a real reward claim. A successful run requires consensus `AGREE`
+plus execution `FINISHED_WITH_RETURN` and writes public addresses, verdicts, and
+explorer links to `deploy\latest-bradbury-verification.json`; private keys are
+never written to the report.

@@ -485,40 +485,48 @@ Campaign -> tester stake -> usage proof + feedback -> AI review -> reward or sla
 
 ---
 
-# Demo Campaign
+# Reference Campaign
 
-Include this sample campaign in the README or seed data:
+Use this as the production reference campaign; do not seed demo data.
 
 ```text
 Title:
-Test GenEscrow Demo
+First-Time Sponsor Campaign Launch Study
 
 Product URL:
-https://example.com/genescrow-demo
+https://verdictproof.vercel.app/
 
 Task:
-Create one escrow in the demo app, submit a transaction URL, and write feedback about the escrow creation UX.
+Create a funded VerdictProof campaign from the tester wallet, verify it appears
+on the live campaign board, and report whether signing, transaction visibility,
+pool funding, and proof requirements are understandable.
 
 Required proof:
-Transaction URL, app result URL, written feedback.
+An accepted Bradbury create-campaign transaction whose sender matches the tester
+wallet, the live campaign outcome URL, and specific written feedback.
 
 Reward pool:
-0.5 GEN
+0.25 GEN
 
 Reward per approved tester:
-0.05 GEN
+0.04 GEN
 
 Stake required:
-0.01 GEN
+0.02 GEN
 
 Minimum score:
-75
+70
 ```
 
 Good feedback example:
 
 ```text
-I created an escrow and submitted a test transaction. The wallet connection worked, but after signing the transaction, the UI did not clearly show whether the escrow was pending or confirmed. The dispute button also appeared too early, before the freelancer submitted work.
+I created campaign #2 from my tester wallet and confirmed the finalized
+transaction opens from the campaign flow. The new campaign appears on the live
+board with its reward, stake, and minimum score. The strongest improvement would
+be to show the created campaign ID beside the transaction link after finalization
+so sponsors can connect the receipt to the resulting state without scanning the
+board.
 ```
 
 Bad feedback example:

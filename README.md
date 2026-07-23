@@ -11,9 +11,9 @@ slash outcome.
 ## Live Deployment
 
 - App: https://verdictproof.vercel.app/
-- Bradbury contract: `0x8B9f38f52C82a333c46f1061bE242A9A880E6b0e`
-- Contract explorer: https://explorer-bradbury.genlayer.com/address/0x8B9f38f52C82a333c46f1061bE242A9A880E6b0e
-- Deployment transaction: https://explorer-bradbury.genlayer.com/tx/0xba830da5325a0602f501a90a7940b4e0505342d90b8c4d8c5291eea603ea8463
+- Bradbury contract: `0x52fe4d8dA220A8b7DC63Ed2fDE9532642AAb4c7e`
+- Contract explorer: https://explorer-bradbury.genlayer.com/address/0x52fe4d8dA220A8b7DC63Ed2fDE9532642AAb4c7e
+- Deployment transaction: https://explorer-bradbury.genlayer.com/tx/0x5f19a0e37724476dad1478ca346613d1c696ee76d16497a51ba389e02ab72b50
 
 ```text
 Project funds campaign
@@ -56,19 +56,19 @@ inspect real evidence and compare it to the campaign:
 - spam or prompt-injection risk in user-submitted text.
 
 The leader and every validator independently call Bradbury's official
-`gen_getTransactionReceipt` RPC method. The contract derives transaction
-success from `status`, consensus `result`, and `txExecutionResult`, and compares
-the receipt sender to the submitting tester wallet. These two evidence gates are
-not delegated to the LLM. Validators then render the public outcome evidence and
-run the same scoring rubric for task completion and feedback quality.
+`gen_getTransactionReceipt` RPC method and render the public outcome URL. The
+contract derives transaction success from `status`, consensus `result`, and
+`txExecutionResult`, then compares the receipt sender to the submitting tester
+wallet. These evidence gates are not delegated to the LLM.
 
-Consensus requires agreement on the material settlement gate: whether the
-evidence proves valid usage and whether the submission is approved or rejected.
-For valid usage, validators also compare the total score within an explicit
-tolerance and the feedback-quality band.
-Differences in prose or allocation of points cannot overturn a shared invalid-
-proof verdict. A correctly shaped JSON response is rejected when its substantive
-decision does not agree with the validator's independent review.
+The LLM produces the detailed four-part rubric and recommendation, but the
+validator does not merely accept a correctly shaped response. It independently
+re-fetches the evidence and rejects a leader verdict unless the receipt is
+successful, the sender matches, the outcome URL belongs to the tested product,
+the receipt contains a contract method call, and the feedback contains concrete
+product-flow detail. It also verifies that the stored approval and reward match
+the evidence gate and campaign threshold. This keeps the detailed review useful
+without letting variable LLM wording or point allocation break consensus.
 
 Bradbury writes request three initial validators and allow the network's three
 consensus rotations. This preserves independent multi-validator judgment while
@@ -137,6 +137,23 @@ Reward per approved tester: 0.01 GEN
 Stake required: 0.01 GEN
 Minimum score: 75
 ```
+
+## Verified Bradbury Run
+
+The committed public report at
+[`deploy/latest-bradbury-verification.json`](deploy/latest-bradbury-verification.json)
+records a full live run against the contract above:
+
+- two sponsor-funded campaigns;
+- a wallet-owned proof approved at 90/100, with `HIGH` feedback quality and a
+  real 0.04 GEN reward claimed alongside the returned 0.02 GEN stake;
+- an ownership-mismatched proof rejected at 10/100 because its receipt sender
+  did not match the tester wallet; its 0.02 GEN stake was slashed into the pool;
+- seven Bradbury explorer links covering creation, proof submission, AI review,
+  and claim transactions.
+
+The report contains public wallet addresses, verdict fields, summaries, rubric
+scores, recommendations, and explorer links only. It contains no private keys.
 
 Good feedback example:
 
@@ -242,7 +259,7 @@ npm run build
 Copy `frontend/.env.example` to `frontend/.env` after deployment:
 
 ```bash
-VITE_VERDICTPROOF_CONTRACT_ADDRESS=0x8B9f38f52C82a333c46f1061bE242A9A880E6b0e
+VITE_VERDICTPROOF_CONTRACT_ADDRESS=0x52fe4d8dA220A8b7DC63Ed2fDE9532642AAb4c7e
 VITE_VERDICTPROOF_CHAIN=bradbury
 VITE_GENLAYER_EXPLORER=https://explorer-bradbury.genlayer.com
 ```
