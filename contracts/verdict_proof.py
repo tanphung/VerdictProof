@@ -33,7 +33,6 @@ STATUS_CLAIMED = "CLAIMED"
 ONE_GEN_ATTO = 10**18
 MIN_POOL_ATTO = 10**17
 MAX_POOL_ATTO = 10**18
-DEFAULT_SCORE_TOLERANCE = 15
 
 MAX_TITLE_CHARS = 120
 MAX_URL_CHARS = 500
@@ -194,6 +193,54 @@ def _fetch_bradbury_transaction(url: str) -> typing.Optional[dict]:
         return None
 
 
+def _transaction_succeeded(transaction: typing.Optional[dict]) -> bool:
+    return bool(
+        transaction
+        and int(transaction["status"]) in (5, 7)
+        and int(transaction["consensus_result"]) == 1
+        and int(transaction["execution_result"]) == 1
+    )
+
+
+def _url_host(url: str) -> str:
+    if not _is_http_url(url):
+        return ""
+    return url.split("://", 1)[1].split("/", 1)[0].lower()
+
+
+def _feedback_has_specific_product_detail(feedback_text: str) -> bool:
+    cleaned = _clean_text(feedback_text, MAX_TEXT_CHARS)
+    words = [word for word in cleaned.replace("\n", " ").split(" ") if word]
+    topic_markers = (
+        "campaign", "transaction", "wallet", "stake", "reward", "proof",
+        "review", "verdict", "dashboard", "claim", "pool", "submission",
+    )
+    marker_count = sum(1 for marker in topic_markers if marker in cleaned.lower())
+    sentence_count = sum(cleaned.count(mark) for mark in (".", "!", "?"))
+    return len(words) >= 28 and marker_count >= 2 and sentence_count >= 2
+
+
+def _has_verifiable_outcome(
+    transaction: typing.Optional[dict],
+    product_url: str,
+    app_result_url: str,
+    app_result_text: str,
+    feedback_text: str,
+    tester_address: str,
+) -> bool:
+    if not _transaction_succeeded(transaction):
+        return False
+    if str(transaction["sender"]).lower() != tester_address.lower():
+        return False
+    if _url_host(product_url) != _url_host(app_result_url):
+        return False
+    if app_result_text.startswith(UNAVAILABLE_PREFIX):
+        return False
+    if "method|" not in str(transaction["calldata_text"]):
+        return False
+    return _feedback_has_specific_product_detail(feedback_text)
+
+
 def _reject_review(score: int, reason: str) -> dict:
     clean_reason = _clean_text(reason, MAX_REASON_CHARS)
     return {
@@ -267,81 +314,62 @@ def _normalize_review(raw: typing.Any, minimum_score: int, reward_per_approved: 
     }
 
 
-def _valid_review_payload(
-    raw: typing.Any,
+def _leader_review_matches_evidence(
+    leader: typing.Any,
+    transaction: typing.Optional[dict],
+    product_url: str,
+    app_result_url: str,
+    app_result_text: str,
+    feedback_text: str,
+    tester_address: str,
     minimum_score: int,
     reward_per_approved: int,
 ) -> bool:
-    if not isinstance(raw, dict):
+    if not isinstance(leader, dict) or transaction is None:
         return False
+
     try:
-        score = _parse_int(raw.get("score"), 0, 100)
-        quality = str(raw.get("feedback_quality", "")).upper()
-        reason = _clean_text(raw.get("reason_summary", ""), MAX_REASON_CHARS)
-        approved = _parse_bool(raw.get("approved"))
-        proof_score = _parse_int(raw.get("proof_score"), 0, 40)
-        feedback_score = _parse_int(raw.get("feedback_score"), 0, 25)
-        insight_score = _parse_int(raw.get("insight_score"), 0, 20)
-        originality_score = _parse_int(raw.get("originality_score"), 0, 15)
-        if quality not in ("LOW", "MEDIUM", "HIGH"):
-            return False
-        if not reason:
-            return False
-        usage_valid = _parse_bool(raw.get("usage_valid"))
-        transaction_success = _parse_bool(raw.get("transaction_success"))
-        identity_match = _parse_bool(raw.get("identity_match"))
-        task_completed = _parse_bool(raw.get("task_completed"))
+        transaction_success = _transaction_succeeded(transaction)
+        identity_match = str(transaction["sender"]).lower() == tester_address.lower()
+        task_completed = _parse_bool(leader.get("task_completed"))
+        usage_valid = _parse_bool(leader.get("usage_valid"))
+        approved = _parse_bool(leader.get("approved"))
+        proof_score = _parse_int(leader.get("proof_score"), 0, 40)
+        feedback_score = _parse_int(leader.get("feedback_score"), 0, 25)
+        insight_score = _parse_int(leader.get("insight_score"), 0, 20)
+        originality_score = _parse_int(leader.get("originality_score"), 0, 15)
+        score = _parse_int(leader.get("score"), 0, 100)
+        quality = str(leader.get("feedback_quality", "")).upper()
+        reason = _clean_text(leader.get("reason_summary", ""), MAX_REASON_CHARS)
         expected_usage_valid = transaction_success and identity_match and task_completed
+        verifiable_outcome = _has_verifiable_outcome(
+            transaction,
+            product_url,
+            app_result_url,
+            app_result_text,
+            feedback_text,
+            tester_address,
+        )
+
+        if quality not in ("LOW", "MEDIUM", "HIGH") or not reason:
+            return False
+        if _parse_bool(leader.get("transaction_success")) != transaction_success:
+            return False
+        if _parse_bool(leader.get("identity_match")) != identity_match:
+            return False
+        if task_completed and not verifiable_outcome:
+            return False
         if usage_valid != expected_usage_valid:
             return False
         if score != proof_score + feedback_score + insight_score + originality_score:
             return False
-        expected_approved = usage_valid and score >= minimum_score
-        if approved != expected_approved:
+        if approved != (usage_valid and score >= minimum_score):
             return False
-        expected_reward = reward_per_approved if expected_approved else 0
-        if int(raw.get("reward_amount", "0")) != expected_reward:
-            return False
-        return True
+        return int(leader.get("reward_amount", "0")) == (
+            reward_per_approved if approved else 0
+        )
     except Exception:
         return False
-
-
-def _reviews_equivalent(
-    leader: typing.Any,
-    validator: typing.Any,
-    minimum_score: int,
-    reward_per_approved: int,
-) -> bool:
-    if not _valid_review_payload(leader, minimum_score, reward_per_approved):
-        return False
-    if not _valid_review_payload(validator, minimum_score, reward_per_approved):
-        return False
-
-    leader_usage_valid = _parse_bool(leader.get("usage_valid"))
-    validator_usage_valid = _parse_bool(validator.get("usage_valid"))
-    if leader_usage_valid != validator_usage_valid:
-        return False
-    leader_approved = _parse_bool(leader.get("approved"))
-    validator_approved = _parse_bool(validator.get("approved"))
-    if leader_approved != validator_approved:
-        return False
-
-    # Independent validators must agree on the settlement gate. Once both find
-    # usage evidence invalid, differences in which failed fact was most salient
-    # or how rubric points were distributed cannot change the slash outcome.
-    if not leader_usage_valid:
-        return not leader_approved
-
-    leader_score = _parse_int(leader.get("score"), 0, 100)
-    validator_score = _parse_int(validator.get("score"), 0, 100)
-    if abs(leader_score - validator_score) > DEFAULT_SCORE_TOLERANCE:
-        return False
-
-    quality_rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
-    leader_quality = quality_rank.get(str(leader.get("feedback_quality", "")).upper(), -10)
-    validator_quality = quality_rank.get(str(validator.get("feedback_quality", "")).upper(), 10)
-    return abs(leader_quality - validator_quality) <= 1
 
 
 def _score_submission(
@@ -368,11 +396,7 @@ def _score_submission(
             "Rejected because the required app outcome page could not be rendered by GenLayer validators.",
         )
 
-    transaction_success = (
-        int(transaction["status"]) in (5, 7)
-        and int(transaction["consensus_result"]) == 1
-        and int(transaction["execution_result"]) == 1
-    )
+    transaction_success = _transaction_succeeded(transaction)
     identity_match = str(transaction["sender"]).lower() == tester_address.lower()
     transaction_facts = json.dumps(transaction, sort_keys=True)
 
@@ -455,22 +479,6 @@ Approval must require usage_valid true and score >= {minimum_score}.
     data["transaction_success"] = transaction_success
     data["identity_match"] = identity_match
     return _normalize_review(data, minimum_score, reward_per_approved)
-
-
-def _handle_leader_error(leaders_res: gl.vm.Result, leader_fn: typing.Callable) -> bool:
-    leader_msg = getattr(leaders_res, "message", "") or ""
-    try:
-        leader_fn()
-        return False
-    except gl.vm.UserError as e:
-        validator_msg = e.message if isinstance(e.message, str) else str(e.message)
-        if validator_msg.startswith(ERR_EXPECTED) or validator_msg.startswith(ERR_EXTERNAL):
-            return validator_msg == leader_msg
-        if validator_msg.startswith(ERR_TRANSIENT) and leader_msg.startswith(ERR_TRANSIENT):
-            return True
-        return False
-    except Exception:
-        return False
 
 
 @allow_storage
@@ -689,14 +697,18 @@ class VerdictProof(gl.Contract):
 
         def validator_fn(leaders_res: gl.vm.Result) -> bool:
             if not isinstance(leaders_res, gl.vm.Return):
-                return _handle_leader_error(leaders_res, leader_fn)
-            try:
-                validator_result = leader_fn()
-            except Exception:
                 return False
-            return _reviews_equivalent(
+
+            transaction = _fetch_bradbury_transaction(transaction_url)
+            app_result_text = _render_text(app_result_url)
+            return _leader_review_matches_evidence(
                 leaders_res.calldata,
-                validator_result,
+                transaction,
+                product_url,
+                app_result_url,
+                app_result_text,
+                feedback_text,
+                tester_address,
                 minimum_score,
                 reward_per_approved,
             )
