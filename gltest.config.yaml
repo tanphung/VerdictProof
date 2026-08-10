@@ -7,7 +7,9 @@ networks:
   default: studionet
 
   localnet: {}
-  studionet: {}
+  studionet:
+    default_wait_interval: 7000
+    default_wait_retries: 100
   testnet_bradbury:
     url: "https://rpc-bradbury.genlayer.com"
     accounts:

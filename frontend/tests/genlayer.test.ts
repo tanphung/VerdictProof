@@ -1,4 +1,3 @@
-import { decodeFunctionData } from "viem";
 import { vi } from "vitest";
 
 const readContractMock = vi.fn();
@@ -134,38 +133,45 @@ describe("genlayer frontend helpers", () => {
     expect(readContractMock).toHaveBeenCalledWith({
       address: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
       functionName: "list_campaigns",
-      args: [0n, 50n]
+      args: [0n, 50n],
+      stateStatus: "finalized"
     });
   });
 
-  it("encodes browser wallet writes with the six-argument Bradbury addTransaction ABI", async () => {
+  it("uses the official GenLayer client for browser wallet writes", async () => {
     const { makeWalletClient, writeContract } = await import("../src/lib/genlayer");
-    const sentTransactions: Array<Record<string, string>> = [];
-    const provider = {
-      request: vi.fn(async ({ method, params }: { method: string; params?: unknown[] }) => {
-        if (method === "eth_estimateGas") return "0x5208";
-        if (method === "eth_gasPrice") return "0x1";
-        if (method === "eth_sendTransaction") {
-          sentTransactions.push((params?.[0] ?? {}) as Record<string, string>);
-          return `0x${"a".repeat(64)}`;
-        }
-        return null;
-      })
-    };
+    const provider = { request: vi.fn() };
+    writeContractMock.mockResolvedValueOnce(`0x${"a".repeat(64)}`);
 
     const client = makeWalletClient(provider, "0x1234567890123456789012345678901234567890");
     const result = await writeContract(client, "create_campaign", ["Title"], 10n);
 
     expect(result).toBe(`0x${"a".repeat(64)}`);
-    expect(sentTransactions).toHaveLength(1);
-    const decoded = decodeFunctionData({
-      abi: addTransactionAbi,
-      data: sentTransactions[0].data as `0x${string}`
+    expect(writeContractMock).toHaveBeenCalledWith({
+      address: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
+      functionName: "create_campaign",
+      args: ["Title"],
+      value: 10n
     });
-    expect(decoded.functionName).toBe("addTransaction");
-    expect(decoded.args ?? []).toHaveLength(6);
-    expect(decoded.args?.[2]).toBe(3n);
-    expect(typeof decoded.args?.[5]).toBe("bigint");
+  });
+
+  it("requires finalized AGREE metadata before showing a review hash", async () => {
+    const { isVerifiedReviewTransaction } = await import("../src/lib/genlayer");
+    const base = {
+      stage: "finalized" as const,
+      statusName: "FINALIZED",
+      resultName: "AGREE",
+      executionResultName: "FINISHED_WITH_RETURN",
+      validatorsAgreed: 5,
+      validatorsTotal: 5,
+      recipient: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
+      functionName: "evaluate_submission"
+    };
+
+    expect(isVerifiedReviewTransaction(base)).toBe(true);
+    expect(isVerifiedReviewTransaction({ ...base, stage: "accepted" })).toBe(false);
+    expect(isVerifiedReviewTransaction({ ...base, recipient: "0x0000000000000000000000000000000000000000" })).toBe(false);
+    expect(isVerifiedReviewTransaction({ ...base, functionName: "claim_reward" })).toBe(false);
   });
 
   it("keeps validator agreement pending until execution succeeds", async () => {
@@ -191,7 +197,8 @@ describe("genlayer frontend helpers", () => {
       resultName: "AGREE",
       executionResultName: "",
       validatorsAgreed: 2,
-      validatorsTotal: 5
+      validatorsTotal: 5,
+      rotationsLeft: 0
     });
   });
 
@@ -207,6 +214,30 @@ describe("genlayer frontend helpers", () => {
 
     expect(status.stage).toBe("accepted");
     expect(status.executionResultName).toBe("FINISHED_WITH_RETURN");
+  });
+
+  it("extracts the reviewed contract and method from Bradbury decoded calldata", async () => {
+    const { getTransactionStatus } = await import("../src/lib/genlayer");
+    getTransaction.mockResolvedValueOnce({
+      statusName: "FINALIZED",
+      resultName: "AGREE",
+      txExecutionResultName: "FINISHED_WITH_RETURN",
+      recipient: "0x4BFE31d4afcB4879aB5f9Acf9144Ff67039F6738",
+      txDataDecoded: {
+        callData: new Map<string, unknown>([
+          ["args", [3n]],
+          ["method", "evaluate_submission"]
+        ])
+      }
+    });
+
+    const status = await getTransactionStatus("0xreview");
+
+    expect(status).toMatchObject({
+      stage: "finalized",
+      recipient: "0x4BFE31d4afcB4879aB5f9Acf9144Ff67039F6738",
+      functionName: "evaluate_submission"
+    });
   });
 
   it("treats accepted execution errors as failed transactions", async () => {
@@ -261,13 +292,34 @@ describe("genlayer frontend helpers", () => {
     getTransaction.mockResolvedValueOnce({
       status_name: "VALIDATORS_TIMEOUT",
       result_name: "TIMEOUT",
-      txExecutionResultName: "FINISHED_WITH_RETURN"
+      txExecutionResultName: "FINISHED_WITH_RETURN",
+      lastRound: { rotationsLeft: 0 }
     });
 
     const status = await getTransactionStatus("0xhash");
 
     expect(status.stage).toBe("failed");
     expect(status.statusName).toBe("VALIDATORS_TIMEOUT");
+  });
+
+  it("keeps a validator timeout pending while Bradbury still has rotations", async () => {
+    const { getTransactionStatus } = await import("../src/lib/genlayer");
+    getTransaction.mockResolvedValueOnce({
+      status_name: "LEADER_TIMEOUT",
+      result_name: "IDLE",
+      txExecutionResultName: "FINISHED_WITH_RETURN",
+      lastRound: {
+        rotationsLeft: 2,
+        validatorVotesName: ["NOT_VOTED", "NOT_VOTED"],
+        roundValidators: ["a", "b", "c", "d", "e"]
+      }
+    });
+
+    const status = await getTransactionStatus("0xhash");
+
+    expect(status.stage).toBe("pending");
+    expect(status.rotationsLeft).toBe(2);
+    expect(status.validatorsTotal).toBe(5);
   });
 
   it("distinguishes an unfinished poll window from transaction failure", async () => {

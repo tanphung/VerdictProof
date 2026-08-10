@@ -1,4 +1,4 @@
-export type CampaignStatus = "OPEN" | "PAUSED";
+export type CampaignStatus = "OPEN" | "PAUSED" | "CLOSED";
 export type SubmissionStatus = "PENDING" | "APPROVED" | "REJECTED" | "CLAIMED";
 
 export type Campaign = {
@@ -44,6 +44,17 @@ export type Submission = {
   evidenceSummary: string;
   improvementRecommendation: string;
   riskFlags: string;
+  rubricVersion: string;
+  validationMethod: string;
+  transactionAnalysis: string;
+  identityAnalysis: string;
+  taskAnalysis: string;
+  proofReason: string;
+  feedbackReason: string;
+  insightReason: string;
+  originalityReason: string;
+  consensusChecks: string;
+  settlementExplanation: string;
   claimed: boolean;
 };
 

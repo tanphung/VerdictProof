@@ -30,9 +30,12 @@ import {
   getTransactionStatus,
   type Eip1193Provider,
   hasContractConfig,
+  isVerifiedReviewTransaction,
   isTransactionPendingError,
   makeWalletClient,
   readContract,
+  REVIEW_TRANSACTIONS,
+  RUBRIC_VERSION,
   type TxStatus,
   waitAccepted,
   writeContract
@@ -110,6 +113,17 @@ type ChainSubmission = {
   evidence_summary?: string;
   improvement_recommendation?: string;
   risk_flags?: string;
+  rubric_version?: string;
+  validation_method?: string;
+  transaction_analysis?: string;
+  identity_analysis?: string;
+  task_analysis?: string;
+  proof_reason?: string;
+  feedback_reason?: string;
+  insight_reason?: string;
+  originality_reason?: string;
+  consensus_checks?: string;
+  settlement_explanation?: string;
   claimed: boolean;
 };
 
@@ -122,6 +136,7 @@ function toBigInt(value: string | number | bigint) {
 }
 
 function asCampaignStatus(value: string): Campaign["status"] {
+  if (value === "CLOSED") return "CLOSED";
   return value === "PAUSED" ? "PAUSED" : "OPEN";
 }
 
@@ -176,6 +191,17 @@ function normalizeSubmission(item: ChainSubmission, campaignTitle = "Live campai
     evidenceSummary: item.evidence_summary || "GenLayer review detail is not available for this submission.",
     improvementRecommendation: item.improvement_recommendation || "Use a newer VerdictProof contract review to receive a specific recommendation.",
     riskFlags: item.risk_flags || "UNSPECIFIED",
+    rubricVersion: item.rubric_version || "LEGACY",
+    validationMethod: item.validation_method || "LEGACY_VALIDATION",
+    transactionAnalysis: item.transaction_analysis || "Detailed transaction analysis is unavailable for this legacy review.",
+    identityAnalysis: item.identity_analysis || "Detailed identity analysis is unavailable for this legacy review.",
+    taskAnalysis: item.task_analysis || "Detailed task analysis is unavailable for this legacy review.",
+    proofReason: item.proof_reason || "Detailed proof rationale is unavailable for this legacy review.",
+    feedbackReason: item.feedback_reason || "Detailed feedback rationale is unavailable for this legacy review.",
+    insightReason: item.insight_reason || "Detailed insight rationale is unavailable for this legacy review.",
+    originalityReason: item.originality_reason || "Detailed originality rationale is unavailable for this legacy review.",
+    consensusChecks: item.consensus_checks || "Legacy review policy.",
+    settlementExplanation: item.settlement_explanation || "Settlement follows the stored verdict and campaign accounting.",
     claimed: Boolean(item.claimed)
   };
 }
@@ -244,6 +270,14 @@ type ActiveTx = {
   status: TxStatus | null;
   error?: string;
   createdAt: number;
+  action?: "create" | "submit" | "review" | "claim" | "close";
+  submissionId?: number;
+  campaignId?: number;
+};
+
+type ReviewConsensus = {
+  hash: string;
+  status: TxStatus;
 };
 
 type LiveState = {
@@ -254,8 +288,8 @@ type LiveState = {
 type AppView = "campaigns" | "review" | "dashboard" | "claims";
 
 const CONTRACT_STORAGE_SCOPE = explorerContract().split("/").filter(Boolean).pop()?.toLowerCase() || "unconfigured";
-const TX_FEED_STORAGE_KEY = `verdictproof:bradbury:${CONTRACT_STORAGE_SCOPE}:tx-feed:v2`;
-const LIVE_STATE_STORAGE_KEY = `verdictproof:bradbury:${CONTRACT_STORAGE_SCOPE}:live-state:v2`;
+const TX_FEED_STORAGE_KEY = `verdictproof:bradbury:${CONTRACT_STORAGE_SCOPE}:${RUBRIC_VERSION}:tx-feed`;
+const LIVE_STATE_STORAGE_KEY = `verdictproof:bradbury:${CONTRACT_STORAGE_SCOPE}:${RUBRIC_VERSION}:live-state`;
 
 function isAppView(value: string | null): value is AppView {
   return value === "campaigns" || value === "review" || value === "dashboard" || value === "claims";
@@ -422,6 +456,7 @@ function App() {
     campaignIdFromUrl() || preferredCampaignId(initialLiveState.campaigns)
   );
   const [showCreate, setShowCreate] = useState(false);
+  const [closingCampaign, setClosingCampaign] = useState<Campaign | null>(null);
   const [campaignForm, setCampaignForm] = useState<CampaignForm>(defaultCampaignForm);
   const [proofForm, setProofForm] = useState<ProofForm>(defaultProofForm);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -439,6 +474,7 @@ function App() {
   const [activeView, setActiveView] = useState<AppView>(initialAppView);
   const [liveLoading, setLiveLoading] = useState(liveMode && initialLiveState.campaigns.length === 0);
   const [manualDisconnect, setManualDisconnect] = useState(false);
+  const [reviewConsensus, setReviewConsensus] = useState<Record<number, ReviewConsensus>>({});
 
   const selectedCampaign = campaigns.find((campaign) => campaign.campaignId === selectedCampaignId) ?? campaigns[0];
   const selectedSubmissions = selectedCampaign ? submissions.filter((item) => item.campaignId === selectedCampaign.campaignId) : [];
@@ -499,6 +535,41 @@ function App() {
     window.localStorage.setItem(TX_FEED_STORAGE_KEY, JSON.stringify(txFeed.slice(0, 8)));
   }, [txFeed]);
 
+  useEffect(() => {
+    if (reviewedSubmissions.length === 0) return;
+    let mounted = true;
+
+    const verify = async () => {
+      const entries = await Promise.all(
+        reviewedSubmissions.map(async (submission) => {
+          const local = txFeed.find(
+            (item) => item.action === "review" && item.submissionId === submission.submissionId && item.hash
+          );
+          const configured = REVIEW_TRANSACTIONS[`${submission.campaignId}-${submission.submissionId}`];
+          const hash = local?.hash ?? configured;
+          if (!hash) return null;
+          try {
+            const status = local?.status ?? (await getTransactionStatus(hash));
+            return isVerifiedReviewTransaction(status)
+              ? ([submission.submissionId, { hash, status }] as const)
+              : null;
+          } catch {
+            return null;
+          }
+        })
+      );
+      if (!mounted) return;
+      setReviewConsensus(
+        Object.fromEntries(entries.filter((entry): entry is readonly [number, ReviewConsensus] => Boolean(entry)))
+      );
+    };
+
+    verify();
+    return () => {
+      mounted = false;
+    };
+  }, [submissions, txFeed]);
+
   const loadLiveData = useCallback(
     async (successMessage?: string): Promise<LiveState> => {
       if (!liveMode) return { campaigns: [], submissions: [] };
@@ -543,7 +614,12 @@ function App() {
   useEffect(() => {
     if (!liveMode) return;
     loadLiveData().catch((error) => {
-      setNotice(errorMessage(error, "Could not load live campaigns from GenLayer."));
+      const detail = errorMessage(error, "Could not load live campaigns from GenLayer.");
+      setNotice(
+        initialLiveState.campaigns.length > 0
+          ? `${detail} Cached data remains visible and may be stale; no current Bradbury state was confirmed.`
+          : detail
+      );
     });
   }, [liveMode, loadLiveData]);
 
@@ -685,8 +761,12 @@ function App() {
     return { campaigns, submissions };
   }
 
-  function trackSubmittedTx(hash: string, label: string) {
-    const tx = { id: hash, hash, label, status: null, createdAt: Date.now() };
+  function trackSubmittedTx(
+    hash: string,
+    label: string,
+    metadata: Pick<ActiveTx, "action" | "submissionId" | "campaignId"> = {}
+  ) {
+    const tx = { id: hash, hash, label, status: null, createdAt: Date.now(), ...metadata };
     setActiveTx(tx);
     setTxFeed((items) => [tx, ...items.filter((item) => item.hash !== hash)].slice(0, 8));
     return tx;
@@ -732,7 +812,8 @@ function App() {
     walletMessage: string,
     write: (client: ReturnType<typeof makeWalletClient>) => Promise<unknown>,
     isSynced: (state: LiveState) => boolean,
-    successMessage: (hash: string) => string
+    successMessage: (hash: string) => string,
+    metadata: Pick<ActiveTx, "action" | "submissionId" | "campaignId"> = {}
   ) {
     let hash = "";
     try {
@@ -740,7 +821,7 @@ function App() {
       await ensureBradburyNetwork(provider!);
       const client = makeWalletClient(provider!, walletAddress!);
       hash = String(await write(client));
-      trackSubmittedTx(hash, label);
+      trackSubmittedTx(hash, label, metadata);
       setNotice(`${label} submitted. Use the transaction link in this flow to verify it.`);
       await waitAccepted(client, hash);
       await waitForLiveState(isSynced, successMessage(hash));
@@ -808,7 +889,12 @@ function App() {
     try {
       await loadLiveData();
     } catch (error) {
-      setNotice(errorMessage(error, "Could not read from GenLayer."));
+      const detail = errorMessage(error, "Could not read from GenLayer.");
+      setNotice(
+        campaigns.length > 0
+          ? `${detail} Cached data remains visible and may be stale; no current Bradbury state was confirmed.`
+          : detail
+      );
     } finally {
       setBusy(null);
     }
@@ -844,7 +930,8 @@ function App() {
             pool
           ),
         (state) => state.campaigns.some((campaign) => campaign.campaignId === nextId),
-        (hash) => `Campaign accepted on Bradbury: ${hash}`
+        (hash) => `Campaign accepted on Bradbury: ${hash}`,
+        { action: "create", campaignId: nextId }
       );
       setSelectedCampaignId(nextId);
       setShowCreate(false);
@@ -883,7 +970,8 @@ function App() {
             selectedCampaign.stakeRequired
           ),
         (state) => state.submissions.some((submission) => submission.submissionId === nextId),
-        (hash) => `Proof submission accepted on Bradbury: ${hash}`
+        (hash) => `Proof submission accepted on Bradbury: ${hash}`,
+        { action: "submit", submissionId: nextId, campaignId: selectedCampaign.campaignId }
       );
     } catch (error) {
       setNotice(errorMessage(error, "Submit proof failed."));
@@ -904,7 +992,8 @@ function App() {
           state.submissions.some(
             (item) => item.submissionId === submission.submissionId && item.status !== submission.status
           ),
-        (hash) => `AI review accepted on Bradbury: ${hash}`
+        (hash) => `AI review accepted on Bradbury: ${hash}`,
+        { action: "review", submissionId: submission.submissionId, campaignId: submission.campaignId }
       );
     } catch (error) {
       setNotice(errorMessage(error, "AI review failed."));
@@ -923,10 +1012,34 @@ function App() {
         (client) => writeContract(client, "claim_reward", [BigInt(submission.submissionId)]),
         (state) =>
           state.submissions.some((item) => item.submissionId === submission.submissionId && item.status === "CLAIMED"),
-        (hash) => `Claim accepted on Bradbury: ${hash}`
+        (hash) => `Claim accepted on Bradbury: ${hash}`,
+        { action: "claim", submissionId: submission.submissionId, campaignId: submission.campaignId }
       );
     } catch (error) {
       setNotice(errorMessage(error, "Claim failed."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function closeCampaign(campaign: Campaign) {
+    if (!requireLiveWallet("close this campaign and withdraw its remaining pool")) return;
+    setBusy(`close-${campaign.campaignId}`);
+    try {
+      await runLiveWrite(
+        "Close campaign",
+        `Open your wallet to close Campaign #${campaign.campaignId} and withdraw ${formatGen(campaign.rewardPool)}...`,
+        (client) => writeContract(client, "close_campaign", [BigInt(campaign.campaignId)]),
+        (state) =>
+          state.campaigns.some(
+            (item) => item.campaignId === campaign.campaignId && item.status === "CLOSED" && item.rewardPool === 0n
+          ),
+        (hash) => `Campaign closed and remaining pool returned on Bradbury: ${hash}`,
+        { action: "close", campaignId: campaign.campaignId }
+      );
+      setClosingCampaign(null);
+    } catch (error) {
+      setNotice(errorMessage(error, "Close campaign failed."));
     } finally {
       setBusy(null);
     }
@@ -1093,6 +1206,8 @@ function App() {
               setProofForm={setProofForm}
               onSubmitProof={submitProof}
               onReview={reviewSubmission}
+              walletAddress={walletAddress}
+              onRequestClose={setClosingCampaign}
               busy={busy}
             />
           ) : null}
@@ -1117,6 +1232,8 @@ function App() {
                   setProofForm={setProofForm}
                   onSubmitProof={submitProof}
                   onReview={reviewSubmission}
+                  walletAddress={walletAddress}
+                  onRequestClose={setClosingCampaign}
                   busy={busy}
                 />
               ) : liveLoading ? (
@@ -1171,7 +1288,11 @@ function App() {
                 <strong>{liveMode ? "Bradbury live" : "Contract required"}</strong>
               </div>
             </section>
-            <ReviewHistory submissions={reviewedSubmissions} />
+            <ReviewHistory
+              submissions={reviewedSubmissions}
+              campaigns={campaigns}
+              consensus={reviewConsensus}
+            />
           </section>
         ) : null}
 
@@ -1197,6 +1318,15 @@ function App() {
           onSubmit={createCampaign}
           onClose={() => setShowCreate(false)}
           busy={busy === "create"}
+        />
+      ) : null}
+
+      {closingCampaign ? (
+        <CloseCampaignModal
+          campaign={closingCampaign}
+          onConfirm={() => closeCampaign(closingCampaign)}
+          onClose={() => setClosingCampaign(null)}
+          busy={busy === `close-${closingCampaign.campaignId}`}
         />
       ) : null}
 
@@ -1241,7 +1371,15 @@ function NoticeBar({
   );
 }
 
-function ReviewHistory({ submissions }: { submissions: Submission[] }) {
+function ReviewHistory({
+  submissions,
+  campaigns,
+  consensus
+}: {
+  submissions: Submission[];
+  campaigns: Campaign[];
+  consensus: Record<number, ReviewConsensus>;
+}) {
   const sorted = [...submissions].sort((a, b) => b.submissionId - a.submissionId).slice(0, 8);
 
   return (
@@ -1254,7 +1392,12 @@ function ReviewHistory({ submissions }: { submissions: Submission[] }) {
       </div>
       {sorted.length > 0 ? (
         <div className="history-list">
-          {sorted.map((submission) => (
+          {sorted.map((submission, index) => {
+            const campaign = campaigns.find((item) => item.campaignId === submission.campaignId);
+            const reviewTx = consensus[submission.submissionId];
+            const openFromUrl =
+              typeof window !== "undefined" && window.location.hash === `#${submissionResultId(submission)}`;
+            return (
             <article className="history-card" id={submissionResultId(submission)} key={submission.submissionId}>
               <div className="history-top">
                 <div>
@@ -1268,45 +1411,126 @@ function ReviewHistory({ submissions }: { submissions: Submission[] }) {
                 <span>{scoreLabel(submission.score)}</span>
               </div>
               <p className="reason">{submission.reasonSummary}</p>
-              <div className="verification-grid" aria-label="Verified on-chain evidence checks">
-                <VerificationFact
-                  label="Transaction receipt"
-                  detail={submission.transactionSuccess
-                    ? "Consensus agreed and execution returned successfully."
-                    : "The proof receipt did not reach a successful final execution."}
-                  passed={submission.transactionSuccess}
-                />
-                <VerificationFact
-                  label="Tester wallet ownership"
-                  detail={submission.identityMatch
-                    ? `Receipt sender matches tester ${shortAddress(submission.tester)}.`
-                    : `Receipt sender does not match tester ${shortAddress(submission.tester)}.`}
-                  passed={submission.identityMatch}
-                />
-                <VerificationFact
-                  label="Campaign task evidence"
-                  detail={submission.taskCompleted
-                    ? "Outcome URL, receipt method, and feedback prove the requested flow."
-                    : "Outcome evidence does not prove the requested campaign flow."}
-                  passed={submission.taskCompleted}
-                />
-              </div>
-              <div className="rubric-grid" aria-label="GenLayer review score breakdown">
-                <RubricScore label="Proof" value={submission.proofScore} maximum={40} />
-                <RubricScore label="Specificity" value={submission.feedbackScore} maximum={25} />
-                <RubricScore label="Insight" value={submission.insightScore} maximum={20} />
-                <RubricScore label="Originality" value={submission.originalityScore} maximum={15} />
-              </div>
-              <div className="review-detail-grid">
-                <div>
-                  <span>Evidence checked</span>
-                  <p>{submission.evidenceSummary}</p>
+              <details className="full-consensus-report" open={index === 0 || openFromUrl}>
+                <summary>
+                  <span>Full validator report</span>
+                  <small>{submission.validationMethod.split("_").join(" ")} · {submission.rubricVersion}</small>
+                </summary>
+                <div className="report-body">
+                  <section className="consensus-proof" aria-label="GenLayer consensus result">
+                    <div>
+                      <span className="panel-overline">Consensus proof</span>
+                      <h5>Independent comparative validation</h5>
+                      <p>{submission.consensusChecks.split("|").join(" · ")}</p>
+                    </div>
+                    {reviewTx ? (
+                      <div className="consensus-metrics">
+                        <Metric label="Lifecycle" value={reviewTx.status.statusName} />
+                        <Metric label="Result" value={reviewTx.status.resultName} />
+                        <Metric label="Execution" value={reviewTx.status.executionResultName} />
+                        <Metric
+                          label="Validator votes"
+                          value={`${reviewTx.status.validatorsAgreed}/${reviewTx.status.validatorsTotal} AGREE`}
+                        />
+                        <a href={explorerTx(reviewTx.hash)} target="_blank" rel="noreferrer">
+                          Verify review transaction <ExternalLink size={12} />
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="consensus-fallback">
+                        <BadgeCheck size={18} />
+                        <div>
+                          <strong>State committed by GenLayer consensus</strong>
+                          <p>Exact historical vote counts are unavailable without the review transaction hash.</p>
+                          <a href={explorerContract()} target="_blank" rel="noreferrer">
+                            Verify contract state <ExternalLink size={12} />
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="report-context">
+                    <div>
+                      <span>Campaign task</span>
+                      <p>{campaign?.taskInstruction ?? "Campaign task unavailable."}</p>
+                    </div>
+                    <div>
+                      <span>Required proof</span>
+                      <p>{campaign?.proofRequirement ?? "Campaign proof requirement unavailable."}</p>
+                    </div>
+                    <div>
+                      <span>Tester wallet</span>
+                      <p>{submission.tester}</p>
+                    </div>
+                    <div>
+                      <span>Approval threshold</span>
+                      <p>{campaign?.minimumScore ?? "—"}/100 · final score {submission.score}/100</p>
+                    </div>
+                  </section>
+
+                  <div className="verification-grid" aria-label="Verified on-chain evidence checks">
+                    <VerificationFact
+                      label="Transaction receipt"
+                      detail={submission.transactionAnalysis}
+                      passed={submission.transactionSuccess}
+                    />
+                    <VerificationFact
+                      label="Tester wallet ownership"
+                      detail={submission.identityAnalysis}
+                      passed={submission.identityMatch}
+                    />
+                    <VerificationFact
+                      label="Campaign task evidence"
+                      detail={submission.taskAnalysis}
+                      passed={submission.taskCompleted}
+                    />
+                  </div>
+
+                  <div className="rubric-grid detailed-rubric" aria-label="GenLayer review score breakdown">
+                    <RubricScore label="Proof" value={submission.proofScore} maximum={40} reason={submission.proofReason} />
+                    <RubricScore label="Specificity" value={submission.feedbackScore} maximum={25} reason={submission.feedbackReason} />
+                    <RubricScore label="Insight" value={submission.insightScore} maximum={20} reason={submission.insightReason} />
+                    <RubricScore label="Originality" value={submission.originalityScore} maximum={15} reason={submission.originalityReason} />
+                  </div>
+
+                  <section className="evidence-links-panel">
+                    <LinkChip
+                      href={submission.transactionUrl}
+                      label="Bradbury transaction evidence"
+                      detail={compactUrlLabel(submission.transactionUrl)}
+                      title="Open submitted transaction evidence"
+                      external
+                    />
+                    <LinkChip
+                      href={submission.appResultUrl}
+                      label="Outcome evidence"
+                      detail={compactUrlLabel(submission.appResultUrl)}
+                      title="Open submitted outcome evidence"
+                      external
+                    />
+                  </section>
+
+                  <div className="review-detail-grid">
+                    <div>
+                      <span>Evidence analysis</span>
+                      <p>{submission.evidenceSummary}</p>
+                    </div>
+                    <div>
+                      <span>Recommendation</span>
+                      <p>{submission.improvementRecommendation}</p>
+                    </div>
+                    <div>
+                      <span>Settlement</span>
+                      <p>{submission.settlementExplanation}</p>
+                    </div>
+                    <div>
+                      <span>Risk flags</span>
+                      <p>{submission.riskFlags}</p>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <span>Recommendation</span>
-                  <p>{submission.improvementRecommendation}</p>
-                </div>
-              </div>
+              </details>
               <div className="history-links">
                 <span>{submission.riskFlags}</span>
                 <LinkChip
@@ -1331,7 +1555,8 @@ function ReviewHistory({ submissions }: { submissions: Submission[] }) {
                 />
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="submissions-empty">
@@ -1355,11 +1580,22 @@ function VerificationFact({ label, detail, passed }: { label: string; detail: st
   );
 }
 
-function RubricScore({ label, value, maximum }: { label: string; value: number; maximum: number }) {
+function RubricScore({
+  label,
+  value,
+  maximum,
+  reason
+}: {
+  label: string;
+  value: number;
+  maximum: number;
+  reason?: string;
+}) {
   return (
     <div className="rubric-score">
       <span>{label}</span>
       <strong>{value}/{maximum}</strong>
+      {reason ? <p>{reason}</p> : null}
     </div>
   );
 }
@@ -1407,6 +1643,8 @@ function CampaignDetail({
   setProofForm,
   onSubmitProof,
   onReview,
+  walletAddress,
+  onRequestClose,
   busy
 }: {
   campaign: Campaign;
@@ -1415,8 +1653,14 @@ function CampaignDetail({
   setProofForm: (form: ProofForm) => void;
   onSubmitProof: (event: FormEvent) => void;
   onReview: (submission: Submission) => void;
+  walletAddress: string | null;
+  onRequestClose: (campaign: Campaign) => void;
   busy: string | null;
 }) {
+  const pendingCount = submissions.filter((submission) => submission.status === "PENDING").length;
+  const isOwner = Boolean(walletAddress && campaign.owner.toLowerCase() === walletAddress.toLowerCase());
+  const canClose = isOwner && campaign.status === "OPEN" && pendingCount === 0;
+
   return (
     <section className="panel detail-panel" id="review">
       <div className="panel-head detail-head">
@@ -1445,8 +1689,23 @@ function CampaignDetail({
             </summary>
             <p>{campaign.proofRequirement}</p>
           </details>
+          {canClose ? (
+            <div className="sponsor-close-panel">
+              <div>
+                <strong>Sponsor settlement ready</strong>
+                <p>No pending submissions. Close this campaign and withdraw {formatGen(campaign.rewardPool)}.</p>
+              </div>
+              <button className="secondary-button danger-button" type="button" onClick={() => onRequestClose(campaign)}>
+                <Banknote size={16} />
+                Close & withdraw remaining pool
+              </button>
+            </div>
+          ) : isOwner && campaign.status === "OPEN" && pendingCount > 0 ? (
+            <p className="form-hint">{pendingCount} pending submission(s) must be reviewed before this campaign can close.</p>
+          ) : null}
         </div>
 
+        {campaign.status === "OPEN" ? (
         <form className="proof-form" onSubmit={onSubmitProof}>
           <h4>Stake GEN & Submit Proof</h4>
           <label>
@@ -1489,6 +1748,12 @@ function CampaignDetail({
             Stake {formatGen(campaign.stakeRequired)} & Submit Proof
           </button>
         </form>
+        ) : (
+          <div className="proof-form closed-campaign-note">
+            <h4>Campaign closed</h4>
+            <p>The sponsor withdrew the remaining pool. Existing approved claims remain available.</p>
+          </div>
+        )}
 
       </div>
 
@@ -1713,6 +1978,51 @@ function SubmissionLinks({ submission }: { submission: Submission }) {
         title="Open VerdictProof contract on Bradbury"
         external
       />
+    </div>
+  );
+}
+
+function CloseCampaignModal({
+  campaign,
+  onConfirm,
+  onClose,
+  busy
+}: {
+  campaign: Campaign;
+  onConfirm: () => void;
+  onClose: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="close-campaign-title">
+      <div className="modal close-campaign-modal">
+        <div className="modal-head">
+          <div>
+            <span className="panel-overline">Sponsor settlement</span>
+            <h3 id="close-campaign-title">Close Campaign #{campaign.campaignId}?</h3>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close campaign confirmation">
+            <X size={18} />
+          </button>
+        </div>
+        <p>
+          This permanently stops new proof submissions and returns the complete remaining reward pool to the campaign owner.
+        </p>
+        <div className="close-refund-amount">
+          <span>Refund to sponsor</span>
+          <strong>{formatGen(campaign.rewardPool)}</strong>
+        </div>
+        <p className="form-hint">Approved testers keep the right to claim stake plus rewards already reserved for them.</p>
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>
+            Keep campaign open
+          </button>
+          <button className="primary-button danger-button" type="button" onClick={onConfirm} disabled={busy}>
+            {busy ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />}
+            Close & withdraw {formatGen(campaign.rewardPool)}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@ web/LLM review. Full validator agreement should be covered by integration tests.
 """
 
 import json
+import sys
 
 CONTRACT = "contracts/verdict_proof.py"
 ONE_GEN = 10**18
@@ -67,7 +68,11 @@ def approve_demo_submission(contract, direct_vm, direct_alice):
         STAKE,
         TX_URL,
         "https://example.com/result/approved",
-        "I completed the flow and found the post-signature status messaging unclear.",
+        (
+            "I completed the campaign transaction and confirmed the wallet, stake, reward, proof, "
+            "and dashboard result. The submission flow worked, but the final status should show "
+            "the new campaign identifier beside the transaction receipt so the outcome is easier to verify."
+        ),
     )
     direct_vm.value = 0
     mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
@@ -92,6 +97,29 @@ def approve_demo_submission(contract, direct_vm, direct_alice):
     )
     contract.evaluate_submission(sid)
     return cid, sid
+
+
+def reviews_equivalent(contract, leader, validator, minimum_score=75):
+    module = sys.modules[type(contract).__module__]
+    return module._reviews_equivalent(leader, validator, minimum_score)
+
+
+def review_candidate(**overrides):
+    candidate = {
+        "transaction_success": True,
+        "identity_match": True,
+        "task_completed": True,
+        "usage_valid": True,
+        "approved": True,
+        "score": 88,
+        "proof_score": 36,
+        "feedback_score": 22,
+        "insight_score": 17,
+        "originality_score": 13,
+        "feedback_quality": "HIGH",
+    }
+    candidate.update(overrides)
+    return candidate
 
 
 def test_create_campaign_stores_fields(direct_vm, direct_deploy, direct_owner):
@@ -380,6 +408,14 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
                 "originality_score": 13,
                 "approved": True,
                 "reason_summary": "The tester completed the flow and gave specific confirmation UX feedback.",
+                "transaction_analysis": "Receipt reached AGREE with successful execution.",
+                "identity_analysis": "Receipt sender matches the tester wallet.",
+                "task_analysis": "Escrow creation is visible in the transaction and outcome page.",
+                "proof_reason": "Strong public transaction and outcome proof.",
+                "feedback_reason": "Feedback names a specific post-signature status issue.",
+                "insight_reason": "The recommendation is actionable for the product owner.",
+                "originality_reason": "The observation is concrete and non-generic.",
+                "settlement_explanation": "Stake and reward are unlocked for the approved tester.",
             }
         ),
     )
@@ -393,6 +429,17 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
     assert reviewed["usage_valid"] is True
     assert reviewed["proof_score"] == 36
     assert reviewed["reward_amount"] == str(REWARD)
+    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_1"
+    assert reviewed["validation_method"] == "INDEPENDENT_COMPARATIVE"
+    assert reviewed["transaction_analysis"] == "Receipt reached AGREE with successful execution."
+    assert reviewed["identity_analysis"] == "Receipt sender matches the tester wallet."
+    assert reviewed["task_analysis"].startswith("Escrow creation")
+    assert reviewed["proof_reason"].startswith("Strong public")
+    assert reviewed["feedback_reason"].startswith("Feedback names")
+    assert reviewed["insight_reason"].startswith("The recommendation")
+    assert reviewed["originality_reason"].startswith("The observation")
+    assert "TOTAL_SCORE_DELTA_12" in reviewed["consensus_checks"]
+    assert reviewed["settlement_explanation"].startswith("Stake and reward")
     assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
 
 
@@ -540,7 +587,7 @@ def test_evaluate_uses_rpc_sender_instead_of_llm_identity_claim(direct_vm, direc
     assert reviewed["usage_valid"] is False
 
 
-def test_evaluate_rejects_unrenderable_proof_without_reverting(direct_vm, direct_deploy, direct_alice):
+def test_evaluate_keeps_stake_pending_when_external_evidence_is_unavailable(direct_vm, direct_deploy, direct_alice):
     contract = direct_deploy(CONTRACT)
     cid = create_demo_campaign(contract, direct_vm)
 
@@ -555,13 +602,55 @@ def test_evaluate_rejects_unrenderable_proof_without_reverting(direct_vm, direct
     )
     direct_vm.value = 0
 
-    reviewed = contract.evaluate_submission(sid)
+    with direct_vm.expect_revert("[TRANSIENT]"):
+        contract.evaluate_submission(sid)
 
-    assert reviewed["status"] == "REJECTED"
-    assert reviewed["score"] == 0
-    assert reviewed["reward_amount"] == "0"
-    assert "could not be verified" in reviewed["reason_summary"]
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL + STAKE)
+    assert contract.get_submission(sid)["status"] == "PENDING"
+    assert contract.get_campaign(cid)["reward_pool"] == str(POOL)
+
+
+def test_rpc_4xx_is_external_and_does_not_slash(direct_vm, direct_deploy, direct_alice):
+    contract = direct_deploy(CONTRACT)
+    cid = create_demo_campaign(contract, direct_vm)
+    direct_vm.sender = direct_alice
+    direct_vm.value = STAKE
+    sid = contract.submit_proof(
+        cid,
+        STAKE,
+        TX_URL,
+        "https://example.com/result/external",
+        "I completed the campaign transaction and documented the wallet, proof, dashboard, and settlement behavior.",
+    )
+    direct_vm.value = 0
+    direct_vm.mock_web(r"^https://rpc-bradbury\.genlayer\.com$", {"method": "POST", "status": 404, "body": "not found"})
+
+    with direct_vm.expect_revert("[EXTERNAL] Bradbury RPC returned HTTP 404"):
+        contract.evaluate_submission(sid)
+
+    assert contract.get_submission(sid)["status"] == "PENDING"
+    assert contract.get_campaign(cid)["reward_pool"] == str(POOL)
+
+
+def test_rpc_5xx_is_transient_and_does_not_slash(direct_vm, direct_deploy, direct_alice):
+    contract = direct_deploy(CONTRACT)
+    cid = create_demo_campaign(contract, direct_vm)
+    direct_vm.sender = direct_alice
+    direct_vm.value = STAKE
+    sid = contract.submit_proof(
+        cid,
+        STAKE,
+        TX_URL,
+        "https://example.com/result/transient",
+        "I completed the campaign transaction and documented the wallet, proof, dashboard, and settlement behavior.",
+    )
+    direct_vm.value = 0
+    direct_vm.mock_web(r"^https://rpc-bradbury\.genlayer\.com$", {"method": "POST", "status": 503, "body": "unavailable"})
+
+    with direct_vm.expect_revert("[TRANSIENT] Bradbury RPC temporarily unavailable"):
+        contract.evaluate_submission(sid)
+
+    assert contract.get_submission(sid)["status"] == "PENDING"
+    assert contract.get_campaign(cid)["reward_pool"] == str(POOL)
 
 
 def test_claim_reward_marks_submission_claimed(direct_vm, direct_deploy, direct_alice):
@@ -627,3 +716,144 @@ def test_rejected_submission_cannot_claim(direct_vm, direct_deploy, direct_alice
 
     with direct_vm.expect_revert("not approved"):
         contract.claim_reward(sid)
+
+
+def test_comparative_validator_rejects_malicious_score(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    leader = review_candidate(
+        score=100,
+        proof_score=40,
+        feedback_score=25,
+        insight_score=20,
+        originality_score=15,
+    )
+    validator = review_candidate(
+        score=76,
+        proof_score=31,
+        feedback_score=19,
+        insight_score=15,
+        originality_score=11,
+    )
+
+    assert reviews_equivalent(contract, leader, validator) is False
+
+
+def test_comparative_validator_rejects_threshold_disagreement(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    leader = review_candidate(
+        approved=True,
+        score=76,
+        proof_score=32,
+        feedback_score=19,
+        insight_score=14,
+        originality_score=11,
+    )
+    validator = review_candidate(
+        approved=False,
+        score=72,
+        proof_score=30,
+        feedback_score=18,
+        insight_score=14,
+        originality_score=10,
+        feedback_quality="MEDIUM",
+    )
+
+    assert reviews_equivalent(contract, leader, validator) is False
+
+
+def test_comparative_validator_accepts_bounded_score_variation(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    leader = review_candidate()
+    validator = review_candidate(
+        score=82,
+        proof_score=33,
+        feedback_score=20,
+        insight_score=16,
+        originality_score=13,
+    )
+
+    assert reviews_equivalent(contract, leader, validator) is True
+
+
+def test_comparative_validator_requires_exact_evidence_gates(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    leader = review_candidate()
+    validator = review_candidate(identity_match=False, usage_valid=False, approved=False)
+
+    assert reviews_equivalent(contract, leader, validator) is False
+
+
+def test_close_campaign_refunds_remaining_pool(direct_vm, direct_deploy, direct_owner):
+    direct_vm.sender = direct_owner
+    contract = direct_deploy(CONTRACT)
+    cid = create_demo_campaign(contract, direct_vm)
+
+    result = contract.close_campaign(cid)
+
+    assert result == {
+        "campaign_id": 1,
+        "status": "CLOSED",
+        "refunded_atto": str(POOL),
+    }
+    assert contract.get_campaign(cid)["status"] == "CLOSED"
+    assert contract.get_campaign(cid)["reward_pool"] == "0"
+
+
+def test_close_campaign_requires_owner_and_no_pending(
+    direct_vm,
+    direct_deploy,
+    direct_owner,
+    direct_alice,
+):
+    direct_vm.sender = direct_owner
+    contract = direct_deploy(CONTRACT)
+    cid = create_demo_campaign(contract, direct_vm)
+
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert("only campaign owner"):
+        contract.close_campaign(cid)
+
+    direct_vm.value = STAKE
+    contract.submit_proof(
+        cid,
+        STAKE,
+        TX_URL,
+        "https://example.com/result/pending",
+        (
+            "This campaign transaction proof and dashboard result need an independent validator "
+            "review before the owner can close and withdraw the remaining reward pool."
+        ),
+    )
+    direct_vm.value = 0
+    direct_vm.sender = direct_owner
+    with direct_vm.expect_revert("pending submissions"):
+        contract.close_campaign(cid)
+
+
+def test_close_campaign_blocks_double_close(direct_vm, direct_deploy, direct_owner):
+    direct_vm.sender = direct_owner
+    contract = direct_deploy(CONTRACT)
+    cid = create_demo_campaign(contract, direct_vm)
+    contract.close_campaign(cid)
+
+    with direct_vm.expect_revert("campaign is not open"):
+        contract.close_campaign(cid)
+
+
+def test_approved_claim_survives_campaign_close(
+    direct_vm,
+    direct_deploy,
+    direct_owner,
+    direct_alice,
+):
+    direct_vm.sender = direct_owner
+    contract = direct_deploy(CONTRACT)
+    cid, sid = approve_demo_submission(contract, direct_vm, direct_alice)
+
+    direct_vm.sender = direct_owner
+    close_result = contract.close_campaign(cid)
+    assert int(close_result["refunded_atto"]) == POOL - REWARD
+
+    direct_vm.sender = direct_alice
+    claim_result = contract.claim_reward(sid)
+    assert claim_result["status"] == "CLAIMED"

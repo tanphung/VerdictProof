@@ -10,11 +10,27 @@ const getTransactionStatus = vi.fn();
 const ensureBradburyNetwork = vi.fn();
 
 vi.mock("../src/lib/genlayer", () => ({
+  CONTRACT_ADDRESS: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
+  RUBRIC_VERSION: "VERDICTPROOF_V2_1",
+  REVIEW_TRANSACTIONS: {},
   explorerContract: vi.fn(() => "https://explorer-bradbury.genlayer.com/address/0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a"),
   explorerTx: vi.fn((hash: string) => `https://explorer-bradbury.genlayer.com/tx/${hash}`),
   ensureBradburyNetwork: (...args: unknown[]) => ensureBradburyNetwork(...args),
   getTransactionStatus: (...args: unknown[]) => getTransactionStatus(...args),
   hasContractConfig: vi.fn(() => true),
+  isVerifiedReviewTransaction: vi.fn((status: {
+    stage: string;
+    resultName: string;
+    executionResultName: string;
+    recipient?: string;
+    functionName?: string;
+  }) =>
+    status.stage === "finalized" &&
+    status.resultName === "AGREE" &&
+    status.executionResultName === "FINISHED_WITH_RETURN" &&
+    status.recipient?.toLowerCase() === "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a".toLowerCase() &&
+    status.functionName === "evaluate_submission"
+  ),
   makeWalletClient: vi.fn((provider: unknown, address: string) => ({ provider, address })),
   readContract: (...args: unknown[]) => readContract(...args),
   waitAccepted: (...args: unknown[]) => waitAccepted(...args),
@@ -125,6 +141,47 @@ function campaign(id = 1, title = "Checkout QA Campaign", submissionCount = 0): 
   };
 }
 
+function reviewedSubmission() {
+  return {
+    submission_id: 1,
+    campaign_id: 1,
+    tester: walletAddress,
+    transaction_url: `https://explorer-bradbury.genlayer.com/tx/${txHash}`,
+    app_result_url: "https://product.example/checkout/result/1",
+    feedback_text: "Specific checkout feedback with a concrete wallet confirmation improvement.",
+    stake_amount: "10000000000000000",
+    status: "APPROVED",
+    score: 88,
+    approved: true,
+    reward_amount: "10000000000000000",
+    transaction_success: true,
+    identity_match: true,
+    task_completed: true,
+    usage_valid: true,
+    feedback_quality: "HIGH",
+    proof_score: 36,
+    feedback_score: 22,
+    insight_score: 17,
+    originality_score: 13,
+    reason_summary: "Independent validators approved the submitted product evidence.",
+    evidence_summary: "The receipt, sender, outcome page, and product feedback were checked independently.",
+    improvement_recommendation: "Show the resulting campaign ID beside the final transaction.",
+    risk_flags: "GOOD_SIGNAL",
+    rubric_version: "VERDICTPROOF_V2_1",
+    validation_method: "INDEPENDENT_COMPARATIVE",
+    transaction_analysis: "The Bradbury receipt reached consensus AGREE and execution finished successfully.",
+    identity_analysis: "The receipt sender exactly matches the submitting tester wallet.",
+    task_analysis: "The transaction method and rendered outcome prove the requested checkout campaign flow.",
+    proof_reason: "Strong receipt, ownership, and outcome evidence.",
+    feedback_reason: "Feedback names a specific wallet confirmation issue.",
+    insight_reason: "The recommendation is actionable for the product owner.",
+    originality_reason: "The observation is concrete and not generic boilerplate.",
+    consensus_checks: "EXACT_EVIDENCE_GATES|EXACT_APPROVAL|TOTAL_SCORE_DELTA_12",
+    settlement_explanation: "Stake is returned and the reserved campaign reward is unlocked.",
+    claimed: false
+  };
+}
+
 function fillCampaignForm(title = "Checkout QA Campaign") {
   fireEvent.change(screen.getByLabelText("Campaign title"), { target: { value: title } });
   fireEvent.change(screen.getByLabelText("Product URL"), { target: { value: "https://product.example/checkout" } });
@@ -179,6 +236,39 @@ describe("VerdictProof app live wallet flow", () => {
       "href",
       "https://explorer-bradbury.genlayer.com/address/0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a"
     );
+  });
+
+  it("labels contract-scoped cache as stale when finalized reads fail", async () => {
+    const cached = campaign();
+    window.localStorage.setItem(
+      "verdictproof:bradbury:0xfb7632b4bbe41d9fa986ae321e2bcaa1eea2478a:VERDICTPROOF_V2_1:live-state",
+      JSON.stringify({
+        campaigns: [{
+          campaignId: cached.campaign_id,
+          owner: cached.owner,
+          title: cached.title,
+          productUrl: cached.product_url,
+          taskInstruction: cached.task_instruction,
+          proofRequirement: cached.proof_requirement,
+          rewardPool: cached.reward_pool,
+          rewardPerApproved: cached.reward_per_approved,
+          stakeRequired: cached.stake_required,
+          minimumScore: cached.minimum_score,
+          status: cached.status,
+          submissionCount: cached.submission_count,
+          approvedCount: cached.approved_count,
+          rejectedCount: cached.rejected_count
+        }],
+        submissions: [],
+        savedAt: Date.now()
+      })
+    );
+    readContract.mockRejectedValue(new Error("Bradbury finalized read unavailable"));
+
+    render(<App />);
+
+    expect(await screen.findByText(/Cached data remains visible and may be stale/)).toBeInTheDocument();
+    expect(screen.getAllByText("Checkout QA Campaign").length).toBeGreaterThan(0);
   });
 
   it("connects the wallet inline without opening a wallet modal", async () => {
@@ -337,5 +427,58 @@ describe("VerdictProof app live wallet flow", () => {
 
     expect(await screen.findByText("Campaign #2")).toBeInTheDocument();
     expect(screen.getByText("No submissions yet")).toBeInTheDocument();
+  });
+
+  it("renders a full on-chain validator report instead of a summary-only verdict", async () => {
+    const user = userEvent.setup();
+    liveCampaigns = [campaign(1, "Checkout QA Campaign", 1)];
+    readContract.mockImplementation(async (method: string) => {
+      if (method === "list_campaigns") {
+        return { campaigns: liveCampaigns, count: 1, total: 1 };
+      }
+      if (method === "list_campaign_submissions") {
+        return { submissions: [reviewedSubmission()], count: 1 };
+      }
+      throw new Error(`Unexpected read method: ${method}`);
+    });
+
+    render(<App />);
+    await screen.findByText("Independent validators approved the submitted product evidence.");
+    await user.click(screen.getByRole("button", { name: /^Dashboard$/i }));
+
+    expect(await screen.findByText("Full validator report")).toBeInTheDocument();
+    expect(screen.getByText("Independent comparative validation")).toBeInTheDocument();
+    expect(screen.getByText("Campaign task")).toBeInTheDocument();
+    expect(screen.getByText("The Bradbury receipt reached consensus AGREE and execution finished successfully.")).toBeInTheDocument();
+    expect(screen.getByText("Strong receipt, ownership, and outcome evidence.")).toBeInTheDocument();
+    expect(screen.getByText("Stake is returned and the reserved campaign reward is unlocked.")).toBeInTheDocument();
+    expect(screen.getByText("State committed by GenLayer consensus")).toBeInTheDocument();
+  });
+
+  it("lets an owner close a settled campaign and withdraw the remaining pool", async () => {
+    const user = userEvent.setup();
+    liveCampaigns = [campaign()];
+    waitAccepted.mockImplementation(async () => {
+      liveCampaigns = [{ ...campaign(), status: "CLOSED", reward_pool: "0" }];
+    });
+
+    render(<App />);
+    expect(await screen.findAllByText("Checkout QA Campaign")).toHaveLength(2);
+    await user.click(screen.getAllByRole("button", { name: /Connect Wallet/i })[0]);
+    await screen.findByText("0x9392...3259");
+    await user.click(screen.getByRole("button", { name: /Close & withdraw remaining pool/i }));
+
+    expect(screen.getByRole("heading", { name: /Close Campaign #1/i })).toBeInTheDocument();
+    expect(screen.getByText("Refund to sponsor")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Close & withdraw 0.1 GEN/i }));
+
+    await waitFor(() => {
+      expect(writeContract).toHaveBeenCalledWith(
+        expect.anything(),
+        "close_campaign",
+        [1n]
+      );
+    });
+    expect(await screen.findByText("Campaign closed")).toBeInTheDocument();
   });
 });

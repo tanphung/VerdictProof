@@ -836,6 +836,38 @@ p {
   line-height: 1.6;
 }
 
+.sponsor-close-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(193, 82, 66, 0.24);
+  background: rgba(255, 241, 238, 0.7);
+}
+
+.sponsor-close-panel strong {
+  color: #7e3227;
+  font-size: 12px;
+}
+
+.sponsor-close-panel p,
+.closed-campaign-note p {
+  margin-top: 5px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.danger-button {
+  border-color: rgba(193, 82, 66, 0.4) !important;
+  color: #7e3227 !important;
+}
+
+.primary-button.danger-button {
+  color: #ffffff !important;
+  background: #a84738 !important;
+}
+
 .proof-form,
 .modal {
   display: grid;
@@ -1080,6 +1112,152 @@ textarea:focus {
   color: var(--muted-strong);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.full-consensus-report {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  border: 1px solid rgba(22, 143, 189, 0.24);
+  background: #fbfdfe;
+}
+
+.full-consensus-report > summary {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.full-consensus-report > summary::-webkit-details-marker {
+  display: none;
+}
+
+.full-consensus-report > summary span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.full-consensus-report > summary small {
+  color: var(--sky);
+  font-size: 10px;
+  text-align: right;
+  text-transform: capitalize;
+}
+
+.report-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
+.consensus-proof {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.75fr) minmax(340px, 1.25fr);
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(38, 158, 112, 0.25);
+  background: rgba(235, 250, 244, 0.72);
+}
+
+.consensus-proof h5 {
+  margin-top: 4px;
+  font-size: 16px;
+}
+
+.consensus-proof p {
+  margin-top: 7px;
+  color: #55717b;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.consensus-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.consensus-metrics a,
+.consensus-fallback a {
+  color: #246b83;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.consensus-fallback {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(38, 158, 112, 0.2);
+  background: #ffffff;
+  color: #177754;
+}
+
+.consensus-fallback strong {
+  font-size: 12px;
+}
+
+.report-context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.report-context > div {
+  padding: 13px;
+  border: 1px solid var(--line);
+  background: #f7fafb;
+}
+
+.report-context span {
+  color: var(--sky);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.report-context p {
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  color: #405e69;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.detailed-rubric .rubric-score {
+  display: grid;
+  grid-template-columns: 1fr auto;
+}
+
+.detailed-rubric .rubric-score p {
+  grid-column: 1 / -1;
+  color: #647b84;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.evidence-links-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.evidence-links-panel a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  color: #315e70;
+  background: #f1f8fa;
+  text-decoration: none;
 }
 
 .verification-grid,
@@ -1334,6 +1512,11 @@ textarea:focus {
   background: #53636c;
 }
 
+.status-closed {
+  color: #f3f7f9;
+  background: #34444c;
+}
+
 .modal-backdrop {
   position: fixed;
   z-index: 50;
@@ -1371,6 +1554,36 @@ textarea:focus {
   margin-top: 5px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.close-campaign-modal {
+  width: min(560px, 100%);
+}
+
+.close-refund-amount {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border: 1px solid rgba(193, 82, 66, 0.24);
+  background: rgba(255, 241, 238, 0.7);
+}
+
+.close-refund-amount span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.close-refund-amount strong {
+  color: #7e3227;
+  font-size: 20px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .spin {
@@ -1599,6 +1812,18 @@ textarea:focus {
   .claim-console .my-grid,
   .history-card {
     grid-template-columns: 1fr;
+  }
+
+  .consensus-proof,
+  .consensus-metrics,
+  .report-context {
+    grid-template-columns: 1fr;
+  }
+
+  .full-consensus-report > summary,
+  .modal-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .stat-card {

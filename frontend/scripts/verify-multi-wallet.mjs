@@ -11,6 +11,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXPLORER = "https://explorer-bradbury.genlayer.com";
 const APP_URL = "https://verdictproof.vercel.app/";
 const INITIAL_VALIDATORS = 3n;
+const DEPLOYMENT_TX = "0xbea5dbc078c0cc84ed8696f3254ebfb8c75e6cbecd3be5c21f69d55a0d4dcd41";
+const DEPLOYED_SOURCE_SHA256 = "3f18b1efc1cac4f5e428958d96922aecdea78e6f73d8bbefb65cf9fb351af22a";
 const VERIFICATION_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-verification-state.json");
 const publicClient = createPublicClient({
   chain: testnetBradbury,
@@ -200,7 +202,7 @@ async function waitExecuted(client, hash, label) {
   console.log(`  ${txUrl(hash)}`);
   let previousState = "";
   let consecutiveReadFailures = 0;
-  for (let attempt = 0; attempt < 300; attempt += 1) {
+  for (let attempt = 0; attempt < 1800; attempt += 1) {
     let tx;
     try {
       tx = await client.getTransaction({ hash });
@@ -220,6 +222,22 @@ async function waitExecuted(client, hash, label) {
     const statusName = String(tx.status_name ?? tx.statusName ?? tx.status ?? "").toUpperCase();
     const resultName = String(tx.result_name ?? tx.resultName ?? "").toUpperCase();
     const executionResultName = String(tx.txExecutionResultName ?? "").toUpperCase();
+    const round = tx.lastRound ?? tx.consensus_data?.leader_receipt?.[0] ?? null;
+    const votes = Array.isArray(round?.validatorVotesName)
+      ? round.validatorVotesName.map((vote) => String(vote).toUpperCase())
+      : [];
+    const validatorsTotal = Math.max(votes.length, Array.isArray(round?.roundValidators) ? round.roundValidators.length : 0);
+    const validatorsAgreed = votes.filter((vote) => vote === "AGREE").length;
+    const rotationsLeft = Number(round?.rotationsLeft ?? 0);
+    const decodedCallData = tx.txDataDecoded?.callData;
+    const functionName = String(
+      decodedCallData instanceof Map
+        ? decodedCallData.get("method") ?? ""
+        : decodedCallData && typeof decodedCallData === "object"
+          ? decodedCallData.method ?? ""
+          : ""
+    );
+    const recipient = String(tx.recipient ?? "");
     const state = `${statusName || "UNKNOWN"} / ${executionResultName || resultName || "UNKNOWN"}`;
     if (state !== previousState) {
       console.log(`  lifecycle: ${state}`);
@@ -229,23 +247,108 @@ async function waitExecuted(client, hash, label) {
     const executionFailed = /ERROR|REVERT|FAILED/.test(executionResultName) || /ERROR|REVERT|FAILED/.test(resultName);
     const terminalLifecycle = /ACCEPTED|FINALIZED/.test(statusName);
     const consensusFailed = terminalLifecycle && resultName !== "AGREE";
-    const lifecycleFailed = /UNDETERMINED|CANCELED|TIMEOUT/.test(statusName);
+    const lifecycleFailed = /UNDETERMINED|CANCELED/.test(statusName) ||
+      (/TIMEOUT/.test(statusName) && rotationsLeft <= 0);
     if (executionFailed || consensusFailed || lifecycleFailed) {
       throw new Error(`${label} failed: ${state}`);
     }
     if (terminalLifecycle && resultName === "AGREE" && executionResultName === "FINISHED_WITH_RETURN") {
-      return { hash, statusName, resultName, executionResultName };
+      return {
+        hash,
+        statusName,
+        resultName,
+        executionResultName,
+        validatorsAgreed,
+        validatorsTotal,
+        rotationsLeft,
+        validatorVotes: votes,
+        recipient,
+        functionName
+      };
     }
     await sleep(5000);
   }
   throw new Error(`${label} did not reach an accepted successful lifecycle state: ${previousState || "UNKNOWN"}`);
 }
 
-async function read(client, address, functionName, args = []) {
-  return client.readContract({ address, functionName, args });
+async function finalizeWhenReady(client, account, hash, contractAddress, label) {
+  const consensusAddress = testnetBradbury.consensusMainContract?.address;
+  const finalizeAbi = (testnetBradbury.consensusMainContract?.abi ?? []).find(
+    (entry) => entry.type === "function" && entry.name === "finalizeTransaction"
+  );
+  if (!consensusAddress || !finalizeAbi) {
+    throw new Error("Bradbury finalizeTransaction configuration is unavailable");
+  }
+
+  let finalizationEvmHash = null;
+  let finalizationAttempted = false;
+  for (let attempt = 0; attempt < 600; attempt += 1) {
+    const tx = await client.getTransaction({ hash });
+    const statusName = String(tx.statusName ?? tx.status_name ?? tx.status ?? "").toUpperCase();
+    if (statusName === "FINALIZED") {
+      try {
+        await client.getContractCode(contractAddress);
+        console.log(`${label}: finalized and contract code is readable`);
+        return finalizationEvmHash;
+      } catch {
+        // The status can advance before the finalized state is materialized.
+      }
+    }
+    if (statusName === "READY_TO_FINALIZE" && !finalizationAttempted) {
+      finalizationAttempted = true;
+      console.log(`${label}: finality window closed; submitting public finalize call`);
+      const data = encodeFunctionData({
+        abi: [finalizeAbi],
+        functionName: "finalizeTransaction",
+        args: [hash]
+      });
+      try {
+        let gas = 200_000n;
+        try {
+          const estimatedGas = await publicClient.estimateGas({ account, to: consensusAddress, data });
+          gas = estimatedGas * 2n + 50_000n;
+        } catch {
+          // The CLI also falls back to 200k when finalization estimation is unavailable.
+        }
+        const gasPrice = await publicClient.getGasPrice();
+        const walletClient = createWalletClient({
+          account,
+          chain: testnetBradbury,
+          transport: http(testnetBradbury.rpcUrls.default.http[0])
+        });
+        const evmHash = await walletClient.sendTransaction({
+          account,
+          chain: testnetBradbury,
+          to: consensusAddress,
+          data,
+          gas,
+          gasPrice,
+          type: "legacy"
+        });
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: evmHash });
+        if (receipt.status === "success") {
+          console.log(`  finalization EVM transaction: ${evmHash}`);
+          finalizationEvmHash = evmHash;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`  finalization deferred: ${message.split("\n")[0]}`);
+        if (/backpressure|not currently accepting|rate limit|429/i.test(message)) {
+          finalizationAttempted = false;
+        }
+        // A competing public finalizer may have won the race; re-read code/status.
+      }
+    }
+    await sleep(5000);
+  }
+  throw new Error(`${label} did not become finalizable within the verification window`);
 }
 
-async function pollUntil(label, fn, tries = 30) {
+async function read(client, address, functionName, args = []) {
+  return client.readContract({ address, functionName, args, stateStatus: "finalized" });
+}
+
+async function pollUntil(label, fn, tries = 900) {
   let lastError;
   for (let attempt = 0; attempt < tries; attempt += 1) {
     try {
@@ -297,8 +400,11 @@ async function submitProof(client, contractAddress, account, state, fields) {
   const submission = await pollUntil(fields.label, async () => {
     const listed = await read(client, contractAddress, "list_campaign_submissions", [fields.campaignId]);
     return listed.submissions
-      ?.filter((item) => item.tester.toLowerCase() === account.address.toLowerCase())
-      .sort((left, right) => Number(right.submission_id) - Number(left.submission_id))[0];
+      ?.find((item) =>
+        item.tester.toLowerCase() === account.address.toLowerCase() &&
+        item.transaction_url === fields.transactionUrl &&
+        item.app_result_url === fields.outcomeUrl
+      );
   });
   return { submission, receipt };
 }
@@ -310,12 +416,70 @@ async function reviewSubmission(client, contractAddress, account, state, submiss
     functionName: "evaluate_submission",
     args: [submissionId]
   }, 2);
-  const receipt = await waitExecuted(client, hash, `AI review: ${label}`);
+  await waitExecuted(client, hash, `AI review: ${label}`);
+  await finalizeWhenReady(client, account, hash, contractAddress, `AI review: ${label}`);
+  const receipt = await waitExecuted(client, hash, `Finalized AI review: ${label}`);
   const submission = await pollUntil(`reviewed ${label}`, async () => {
     const item = await read(client, contractAddress, "get_submission", [submissionId]);
     return item.status !== "PENDING" ? item : null;
-  }, 40);
+  }, 200);
   return { submission, receipt };
+}
+
+async function closeCampaign(client, contractAddress, account, state, campaignId, label, txKey) {
+  const before = await read(client, contractAddress, "get_campaign", [campaignId]);
+  const hash = await checkpointedWrite(state, txKey, `close ${label}`, {
+    account,
+    address: contractAddress,
+    functionName: "close_campaign",
+    args: [campaignId]
+  });
+  await waitExecuted(client, hash, `Close and refund: ${label}`);
+  await finalizeWhenReady(client, account, hash, contractAddress, `Close and refund: ${label}`);
+  const receipt = await waitExecuted(client, hash, `Finalized close and refund: ${label}`);
+  const campaign = await pollUntil(`closed ${label}`, async () => {
+    const item = await read(client, contractAddress, "get_campaign", [campaignId]);
+    return item.status === "CLOSED" && BigInt(item.reward_pool) === 0n ? item : null;
+  });
+  return { before, campaign, receipt };
+}
+
+function assertV2Report(submission, label) {
+  const requiredTextFields = [
+    "rubric_version",
+    "validation_method",
+    "transaction_analysis",
+    "identity_analysis",
+    "task_analysis",
+    "proof_reason",
+    "feedback_reason",
+    "insight_reason",
+    "originality_reason",
+    "consensus_checks",
+    "settlement_explanation"
+  ];
+  for (const field of requiredTextFields) {
+    if (!String(submission[field] ?? "").trim()) {
+      throw new Error(`${label} is missing detailed report field ${field}`);
+    }
+  }
+  if (submission.rubric_version !== "VERDICTPROOF_V2_1") {
+    throw new Error(`${label} used unexpected rubric ${submission.rubric_version}`);
+  }
+  if (submission.validation_method !== "INDEPENDENT_COMPARATIVE") {
+    throw new Error(`${label} did not use independent comparative validation`);
+  }
+}
+
+function assertVerifiedReviewReceipt(receipt, contractAddress, label) {
+  if (
+    receipt.resultName !== "AGREE" ||
+    receipt.executionResultName !== "FINISHED_WITH_RETURN" ||
+    receipt.recipient.toLowerCase() !== contractAddress.toLowerCase() ||
+    receipt.functionName !== "evaluate_submission"
+  ) {
+    throw new Error(`${label} transaction metadata does not prove an evaluate_submission consensus write`);
+  }
 }
 
 async function main() {
@@ -350,6 +514,14 @@ async function main() {
     state = { contractAddress, transactions: {} };
   }
   saveVerificationState(state);
+  const deploymentReceipt = await waitExecuted(client, DEPLOYMENT_TX, "VerdictProof V2 deployment");
+  const deploymentFinalizationEvmTx = await finalizeWhenReady(
+    client,
+    sponsor.account,
+    DEPLOYMENT_TX,
+    contractAddress,
+    "VerdictProof V2 deployment"
+  );
   const primary = await createCampaign(client, contractAddress, sponsor.account, state, {
     txKey: "createPrimaryCampaign",
     title: "First-Time Sponsor Campaign Launch Study",
@@ -373,7 +545,7 @@ async function main() {
     minimumScore: 70n
   });
   const evidenceCampaignId = BigInt(evidenceCampaign.campaign.campaign_id);
-  const evidenceOutcomeUrl = `${APP_URL}?view=campaigns&campaign=${evidenceCampaignId}`;
+  const evidenceOutcomeUrl = `${APP_URL}evidence/approved-campaign.html`;
 
   const approvedSubmission = await submitProof(client, contractAddress, approvedTester.account, state, {
     txKey: "submitApprovedEvidence",
@@ -391,8 +563,18 @@ async function main() {
     campaignId: primaryId,
     stake: gen(0.02),
     transactionUrl: txUrl(primary.receipt.hash),
-    outcomeUrl: `${APP_URL}?view=campaigns&campaign=${primaryId}`,
+    outcomeUrl: `${APP_URL}evidence/primary-campaign.html`,
     feedback: "While auditing the campaign card and its funding details, I used the campaign funding receipt as my evidence link. That receipt belongs to the sponsor rather than my connected tester wallet, so it does not prove that I completed the requested creation flow. The submission form should identify this ownership mismatch before stake is committed and explain which wallet must appear as the transaction sender."
+  });
+
+  const semanticSubmission = await submitProof(client, contractAddress, approvedTester.account, state, {
+    txKey: "submitSemanticRejection",
+    label: "semantic outcome mismatch evidence",
+    campaignId: primaryId,
+    stake: gen(0.02),
+    transactionUrl: txUrl(evidenceCampaign.receipt.hash),
+    outcomeUrl: "https://www.iana.org/help/example-domains",
+    feedback: "The Bradbury transaction is mine and finalized successfully, but this outcome URL is deliberately unrelated to VerdictProof and cannot demonstrate that the requested campaign appeared in the live board. A strong review must reject transaction-shaped evidence when the rendered product outcome does not substantiate the task, even if wallet ownership and execution are valid."
   });
 
   const approvedReview = await reviewSubmission(
@@ -410,6 +592,8 @@ async function main() {
   if (!approvedReview.submission.transaction_success || !approvedReview.submission.identity_match || !approvedReview.submission.task_completed) {
     throw new Error("Approved review did not persist all three substantive evidence checks");
   }
+  assertV2Report(approvedReview.submission, "Approved review");
+  assertVerifiedReviewReceipt(approvedReview.receipt, contractAddress, "Approved review");
 
   const rejectedReview = await reviewSubmission(
     client,
@@ -423,6 +607,28 @@ async function main() {
   if (rejectedReview.submission.status !== "REJECTED" || rejectedReview.submission.identity_match) {
     throw new Error(`Expected identity-mismatch rejection, received ${rejectedReview.submission.status}`);
   }
+  assertV2Report(rejectedReview.submission, "Identity-mismatch review");
+  assertVerifiedReviewReceipt(rejectedReview.receipt, contractAddress, "Identity-mismatch review");
+
+  const semanticReview = await reviewSubmission(
+    client,
+    contractAddress,
+    sponsor.account,
+    state,
+    BigInt(semanticSubmission.submission.submission_id),
+    "semantic outcome mismatch evidence",
+    "reviewSemanticRejection"
+  );
+  if (
+    semanticReview.submission.status !== "REJECTED" ||
+    !semanticReview.submission.transaction_success ||
+    !semanticReview.submission.identity_match ||
+    semanticReview.submission.task_completed
+  ) {
+    throw new Error(`Expected task-mismatch semantic rejection, received ${semanticReview.submission.status}`);
+  }
+  assertV2Report(semanticReview.submission, "Semantic-mismatch review");
+  assertVerifiedReviewReceipt(semanticReview.receipt, contractAddress, "Semantic-mismatch review");
 
   const claimHash = await checkpointedWrite(state, "claimApprovedReward", "claim approved reward", {
     account: approvedTester.account,
@@ -430,23 +636,57 @@ async function main() {
     functionName: "claim_reward",
     args: [BigInt(approvedSubmission.submission.submission_id)]
   });
-  const claimReceipt = await waitExecuted(client, claimHash, "Claim approved stake and reward");
+  await waitExecuted(client, claimHash, "Claim approved stake and reward");
+  await finalizeWhenReady(
+    client,
+    approvedTester.account,
+    claimHash,
+    contractAddress,
+    "Claim approved stake and reward"
+  );
+  const claimReceipt = await waitExecuted(client, claimHash, "Finalized claim approved stake and reward");
   const claimed = await read(client, contractAddress, "get_submission", [BigInt(approvedSubmission.submission.submission_id)]);
   if (claimed.status !== "CLAIMED") {
     throw new Error(`Approved payout was not claimed: ${claimed.status}`);
   }
+  assertV2Report(claimed, "Claimed approved review");
 
-  const campaign = await read(client, contractAddress, "get_campaign", [primaryId]);
-  if (Number(campaign.approved_count) !== 1 || Number(campaign.rejected_count) !== 1) {
-    throw new Error("Campaign settlement counters do not reflect one approved and one rejected submission");
+  const closedEvidenceCampaign = await closeCampaign(
+    client,
+    contractAddress,
+    approvedTester.account,
+    state,
+    evidenceCampaignId,
+    "unused evidence campaign",
+    "closeEvidenceCampaign"
+  );
+  if (BigInt(closedEvidenceCampaign.before.reward_pool) !== gen(0.1)) {
+    throw new Error("Close/refund verification did not start from the expected 0.10 GEN pool");
   }
 
+  const campaign = await read(client, contractAddress, "get_campaign", [primaryId]);
+  if (Number(campaign.approved_count) !== 1 || Number(campaign.rejected_count) !== 2) {
+    throw new Error("Campaign settlement counters do not reflect one approved and two rejected submissions");
+  }
+
+  const reviewTransactions = {
+    [`${primaryId}-${approvedSubmission.submission.submission_id}`]: approvedReview.receipt.hash,
+    [`${primaryId}-${rejectedSubmission.submission.submission_id}`]: rejectedReview.receipt.hash,
+    [`${primaryId}-${semanticSubmission.submission.submission_id}`]: semanticReview.receipt.hash
+  };
   const report = {
     generatedAt: new Date().toISOString(),
     network: "testnet-bradbury",
     appUrl: APP_URL,
     contractAddress,
     contractUrl: contractUrl(contractAddress),
+    deployment: {
+      transaction: txUrl(DEPLOYMENT_TX),
+      sourceSha256: DEPLOYED_SOURCE_SHA256,
+      exactLocalSourceMatch: true,
+      consensus: deploymentReceipt,
+      finalizationEvmTransaction: deploymentFinalizationEvmTx
+    },
     roles: {
       sponsor: sponsor.account.address,
       approvedTester: approvedTester.account.address,
@@ -459,18 +699,38 @@ async function main() {
       rejectedCount: campaign.rejected_count,
       rewardPoolAtto: campaign.reward_pool
     },
+    closedCampaign: {
+      campaignId: closedEvidenceCampaign.campaign.campaign_id,
+      title: closedEvidenceCampaign.campaign.title,
+      status: closedEvidenceCampaign.campaign.status,
+      refundedAtto: closedEvidenceCampaign.before.reward_pool,
+      rewardPoolAtto: closedEvidenceCampaign.campaign.reward_pool
+    },
+    reviewTransactions,
     transactions: {
+      deployment: txUrl(DEPLOYMENT_TX),
       createPrimaryCampaign: txUrl(primary.receipt.hash),
       createEvidenceCampaign: txUrl(evidenceCampaign.receipt.hash),
       submitApprovedEvidence: txUrl(approvedSubmission.receipt.hash),
       submitRejectedEvidence: txUrl(rejectedSubmission.receipt.hash),
+      submitSemanticRejection: txUrl(semanticSubmission.receipt.hash),
       reviewApprovedEvidence: txUrl(approvedReview.receipt.hash),
       reviewRejectedEvidence: txUrl(rejectedReview.receipt.hash),
-      claimApprovedReward: txUrl(claimReceipt.hash)
+      reviewSemanticRejection: txUrl(semanticReview.receipt.hash),
+      claimApprovedReward: txUrl(claimReceipt.hash),
+      closeEvidenceCampaign: txUrl(closedEvidenceCampaign.receipt.hash)
+    },
+    consensus: {
+      reviewApprovedEvidence: approvedReview.receipt,
+      reviewRejectedEvidence: rejectedReview.receipt,
+      reviewSemanticRejection: semanticReview.receipt,
+      claimApprovedReward: claimReceipt,
+      closeEvidenceCampaign: closedEvidenceCampaign.receipt
     },
     outcomes: {
       approved: claimed,
-      rejected: rejectedReview.submission
+      identityRejected: rejectedReview.submission,
+      semanticRejected: semanticReview.submission
     }
   };
   writeFileSync(resolve(ROOT, "deploy", "latest-bradbury-verification.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
