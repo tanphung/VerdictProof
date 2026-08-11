@@ -145,6 +145,16 @@ function asSubmissionStatus(value: string): SubmissionStatus {
   return "PENDING";
 }
 
+function validationMethodLabel(method: string) {
+  if (method === "INDEPENDENT_HARD_GATE_FEEDBACK") {
+    return "Independent hard-gate + comparative feedback";
+  }
+  if (method === "INDEPENDENT_COMPARATIVE") {
+    return "Independent comparative semantic validation";
+  }
+  return method.split("_").join(" ");
+}
+
 function normalizeCampaign(item: ChainCampaign): Campaign {
   return {
     campaignId: toNumber(item.campaign_id),
@@ -1420,7 +1430,7 @@ function ReviewHistory({
                   <section className="consensus-proof" aria-label="GenLayer consensus result">
                     <div>
                       <span className="panel-overline">Consensus proof</span>
-                      <h5>Independent comparative validation</h5>
+                      <h5>{validationMethodLabel(submission.validationMethod)}</h5>
                       <p>{submission.consensusChecks.split("|").join(" · ")}</p>
                     </div>
                     {reviewTx ? (

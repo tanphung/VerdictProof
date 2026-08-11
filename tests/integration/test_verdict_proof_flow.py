@@ -6,6 +6,7 @@ or:
     gltest tests/integration/ -v -s --network localnet
 """
 
+import json
 import time
 
 from gltest import get_contract_factory
@@ -16,7 +17,21 @@ REWARD = 5 * 10**16
 STAKE = 10**16
 BRADBURY_TX_URL = "https://explorer-bradbury.genlayer.com/tx/0x760c748dbd931513d4f741f8323d30e050df431f6fd1f439389a4b1f5d430cb7"
 
-def test_ai_review_reaches_consensus_on_public_evidence():
+
+def consensus_return(receipt):
+    assert str(receipt["status_name"]).upper().endswith("ACCEPTED")
+    assert str(receipt["result_name"]).upper().endswith("AGREE")
+    round_data = receipt.get("last_round") or {}
+    votes = [str(vote).upper() for vote in round_data.get("validator_votes_name", [])]
+    agreed = sum(vote.endswith("AGREE") and not vote.endswith("DISAGREE") for vote in votes)
+    disagreed = sum(vote.endswith("DISAGREE") for vote in votes)
+    assert len(votes) == 5
+    assert agreed >= 3 and agreed > disagreed
+    result = receipt["consensus_data"]["leader_receipt"][0]["result"]
+    assert result["status"] == "return"
+    return json.loads(result["payload"]["readable"])
+
+def test_identity_mismatch_reaches_consensus_through_hard_gate():
     factory = get_contract_factory(contract_name="VerdictProof")
     contract = factory.deploy(args=[])
 
@@ -51,7 +66,10 @@ def test_ai_review_reaches_consensus_on_public_evidence():
     review = contract.evaluate_submission(args=[1]).transact()
     assert tx_execution_succeeded(review)
 
-    result = contract.get_submission(args=[1]).call()
+    # StudioNet exposes the accepted consensus receipt before its state snapshot
+    # necessarily materializes. Assert the consensus-approved return directly;
+    # Bradbury verification separately requires finalized state reads.
+    result = consensus_return(review)
     assert result["status"] == "REJECTED"
     assert result["reason_summary"]
     assert result["evidence_summary"]
@@ -72,8 +90,9 @@ def test_ai_review_reaches_consensus_on_public_evidence():
     assert result["task_completed"] is False
     assert result["usage_valid"] is False
     assert result["approved"] is False
-    assert result["rubric_version"] == "VERDICTPROOF_V2_1"
-    assert result["validation_method"] == "INDEPENDENT_COMPARATIVE"
+    assert result["rubric_version"] == "VERDICTPROOF_V2_2"
+    assert result["validation_method"] == "INDEPENDENT_HARD_GATE_FEEDBACK"
+    assert result["proof_score"] == 0
     assert result["transaction_analysis"]
     assert result["identity_analysis"]
     assert result["task_analysis"]

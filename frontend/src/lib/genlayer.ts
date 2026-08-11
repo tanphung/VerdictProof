@@ -21,7 +21,7 @@ export const EXPLORER =
   runtimeConfig?.explorer || import.meta.env.VITE_GENLAYER_EXPLORER || "https://explorer-bradbury.genlayer.com";
 export const CHAIN = testnetBradbury;
 export const RUBRIC_VERSION = runtimeConfig?.rubricVersion || "VERDICTPROOF_V2_1";
-export const INITIAL_VALIDATORS = 3n;
+export const INITIAL_VALIDATORS = 5n;
 export const REVIEW_TRANSACTIONS = runtimeConfig?.reviewTransactions ?? {};
 
 export type Eip1193Provider = {

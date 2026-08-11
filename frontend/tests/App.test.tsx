@@ -167,7 +167,7 @@ function reviewedSubmission() {
     evidence_summary: "The receipt, sender, outcome page, and product feedback were checked independently.",
     improvement_recommendation: "Show the resulting campaign ID beside the final transaction.",
     risk_flags: "GOOD_SIGNAL",
-    rubric_version: "VERDICTPROOF_V2_1",
+    rubric_version: "VERDICTPROOF_V2_2",
     validation_method: "INDEPENDENT_COMPARATIVE",
     transaction_analysis: "The Bradbury receipt reached consensus AGREE and execution finished successfully.",
     identity_analysis: "The receipt sender exactly matches the submitting tester wallet.",
@@ -447,12 +447,48 @@ describe("VerdictProof app live wallet flow", () => {
     await user.click(screen.getByRole("button", { name: /^Dashboard$/i }));
 
     expect(await screen.findByText("Full validator report")).toBeInTheDocument();
-    expect(screen.getByText("Independent comparative validation")).toBeInTheDocument();
+    expect(screen.getByText("Independent comparative semantic validation")).toBeInTheDocument();
     expect(screen.getByText("Campaign task")).toBeInTheDocument();
     expect(screen.getByText("The Bradbury receipt reached consensus AGREE and execution finished successfully.")).toBeInTheDocument();
     expect(screen.getByText("Strong receipt, ownership, and outcome evidence.")).toBeInTheDocument();
     expect(screen.getByText("Stake is returned and the reserved campaign reward is unlocked.")).toBeInTheDocument();
     expect(screen.getByText("State committed by GenLayer consensus")).toBeInTheDocument();
+  });
+
+  it("labels hard-gate reports without claiming semantic task evaluation", async () => {
+    const hardGate = {
+      ...reviewedSubmission(),
+      status: "REJECTED",
+      approved: false,
+      score: 40,
+      reward_amount: "0",
+      identity_match: false,
+      task_completed: false,
+      usage_valid: false,
+      proof_score: 0,
+      feedback_score: 18,
+      insight_score: 13,
+      originality_score: 9,
+      validation_method: "INDEPENDENT_HARD_GATE_FEEDBACK",
+      reason_summary: "Rejected because the finalized receipt sender does not match the tester wallet.",
+      task_analysis: "Task completion was not evaluated because the finalized receipt failed a mandatory hard gate.",
+      risk_flags: "IDENTITY_MISMATCH",
+      consensus_checks: "FINALIZED_RECEIPT|EXACT_TRANSACTION_GATE|EXACT_IDENTITY_GATE|FEEDBACK_DELTA_5"
+    };
+    liveCampaigns = [campaign(1, "Checkout QA Campaign", 1)];
+    readContract.mockImplementation(async (method: string) => {
+      if (method === "list_campaigns") return { campaigns: liveCampaigns, count: 1, total: 1 };
+      if (method === "list_campaign_submissions") return { submissions: [hardGate], count: 1 };
+      throw new Error(`Unexpected read method: ${method}`);
+    });
+
+    render(<App />);
+    await screen.findByText(hardGate.reason_summary);
+    await userEvent.click(screen.getByRole("button", { name: /^Dashboard$/i }));
+
+    expect(await screen.findByText("Independent hard-gate + comparative feedback")).toBeInTheDocument();
+    expect(screen.getByText(hardGate.task_analysis)).toBeInTheDocument();
+    expect(screen.queryByText("Independent comparative semantic validation")).not.toBeInTheDocument();
   });
 
   it("lets an owner close a settled campaign and withdraw the remaining pool", async () => {

@@ -10,9 +10,9 @@ const ATTO = 10n ** 18n;
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXPLORER = "https://explorer-bradbury.genlayer.com";
 const APP_URL = "https://verdictproof.vercel.app/";
-const INITIAL_VALIDATORS = 3n;
-const DEPLOYMENT_TX = "0xbea5dbc078c0cc84ed8696f3254ebfb8c75e6cbecd3be5c21f69d55a0d4dcd41";
-const DEPLOYED_SOURCE_SHA256 = "3f18b1efc1cac4f5e428958d96922aecdea78e6f73d8bbefb65cf9fb351af22a";
+const INITIAL_VALIDATORS = 5n;
+const DEPLOYMENT_TX = "0x54e9a355d7a78063cca3911444419cdb68d4e4a005f21476f537909b7b533fd4";
+const DEPLOYED_SOURCE_SHA256 = "beb10785ccf2544c409d7c2405cfb3de076323d5339f86a457095c46c5c62cc5";
 const VERIFICATION_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-verification-state.json");
 const publicClient = createPublicClient({
   chain: testnetBradbury,
@@ -282,8 +282,24 @@ async function finalizeWhenReady(client, account, hash, contractAddress, label) 
 
   let finalizationEvmHash = null;
   let finalizationAttempted = false;
+  let consecutiveReadFailures = 0;
   for (let attempt = 0; attempt < 600; attempt += 1) {
-    const tx = await client.getTransaction({ hash });
+    let tx;
+    try {
+      tx = await client.getTransaction({ hash });
+      consecutiveReadFailures = 0;
+    } catch (error) {
+      consecutiveReadFailures += 1;
+      const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      if (consecutiveReadFailures === 1) {
+        console.log(`  finality RPC read interrupted; retrying: ${message}`);
+      }
+      if (consecutiveReadFailures >= 20) {
+        throw new Error(`${label} finality could not be read after ${consecutiveReadFailures} RPC failures`);
+      }
+      await sleep(5000);
+      continue;
+    }
     const statusName = String(tx.statusName ?? tx.status_name ?? tx.status ?? "").toUpperCase();
     if (statusName === "FINALIZED") {
       try {
@@ -380,7 +396,12 @@ async function createCampaign(client, contractAddress, account, state, fields) {
     ],
     value: fields.pool
   });
-  const receipt = await waitExecuted(client, hash, `Create campaign: ${fields.title}`);
+  await waitExecuted(client, hash, `Create campaign: ${fields.title}`);
+  await finalizeWhenReady(client, account, hash, contractAddress, `Create campaign: ${fields.title}`);
+  const receipt = await waitExecuted(client, hash, `Finalized campaign: ${fields.title}`);
+  if (receipt.statusName !== "FINALIZED") {
+    throw new Error(`Campaign evidence ${fields.title} is not finalized`);
+  }
   const campaign = await pollUntil(fields.title, async () => {
     const listed = await read(client, contractAddress, "list_campaigns", [0n, 50n]);
     return listed.campaigns?.find((item) => item.title === fields.title);
@@ -396,7 +417,12 @@ async function submitProof(client, contractAddress, account, state, fields) {
     args: [fields.campaignId, fields.stake, fields.transactionUrl, fields.outcomeUrl, fields.feedback],
     value: fields.stake
   });
-  const receipt = await waitExecuted(client, hash, `Submit proof: ${fields.label}`);
+  await waitExecuted(client, hash, `Submit proof: ${fields.label}`);
+  await finalizeWhenReady(client, account, hash, contractAddress, `Submit proof: ${fields.label}`);
+  const receipt = await waitExecuted(client, hash, `Finalized proof submission: ${fields.label}`);
+  if (receipt.statusName !== "FINALIZED") {
+    throw new Error(`Proof submission ${fields.label} is not finalized`);
+  }
   const submission = await pollUntil(fields.label, async () => {
     const listed = await read(client, contractAddress, "list_campaign_submissions", [fields.campaignId]);
     return listed.submissions
@@ -444,7 +470,7 @@ async function closeCampaign(client, contractAddress, account, state, campaignId
   return { before, campaign, receipt };
 }
 
-function assertV2Report(submission, label) {
+function assertV2Report(submission, label, expectedValidationMethod) {
   const requiredTextFields = [
     "rubric_version",
     "validation_method",
@@ -463,11 +489,11 @@ function assertV2Report(submission, label) {
       throw new Error(`${label} is missing detailed report field ${field}`);
     }
   }
-  if (submission.rubric_version !== "VERDICTPROOF_V2_1") {
+  if (submission.rubric_version !== "VERDICTPROOF_V2_2") {
     throw new Error(`${label} used unexpected rubric ${submission.rubric_version}`);
   }
-  if (submission.validation_method !== "INDEPENDENT_COMPARATIVE") {
-    throw new Error(`${label} did not use independent comparative validation`);
+  if (submission.validation_method !== expectedValidationMethod) {
+    throw new Error(`${label} used ${submission.validation_method}, expected ${expectedValidationMethod}`);
   }
 }
 
@@ -526,23 +552,16 @@ async function main() {
     txKey: "createPrimaryCampaign",
     title: "First-Time Sponsor Campaign Launch Study",
     task: "Use VerdictProof to create a funded Bradbury campaign from your own tester wallet. Confirm the campaign appears in the live campaign board after finalization, then report whether wallet signing, transaction visibility, pool funding, and proof requirements are understandable.",
-    proof: "Provide the Bradbury create_campaign transaction. It must be accepted or finalized with execution FINISHED_WITH_RETURN, and its sender must match the submitting tester wallet. Provide the live campaign URL and feedback citing the created campaign title, funded amount, observed result, and one actionable UX improvement.",
-    pool: gen(0.25),
-    reward: gen(0.04),
-    stake: gen(0.02),
-    minimumScore: 70n
+    proof: "Provide the finalized Bradbury create_campaign transaction from the tester wallet, the live campaign URL, funded amount, observed result, and one actionable UX improvement.",
+    pool: gen(0.25), reward: gen(0.04), stake: gen(0.02), minimumScore: 70n
   });
   const primaryId = BigInt(primary.campaign.campaign_id);
-
   const evidenceCampaign = await createCampaign(client, contractAddress, approvedTester.account, state, {
     txKey: "createEvidenceCampaign",
     title: "Verdict and Transaction Clarity Study",
     task: "Complete one VerdictProof submission lifecycle and assess whether each wallet action has a clear transaction link, pending state, final verdict, and reward or slash explanation.",
-    proof: "Provide Bradbury transaction evidence accepted or finalized with FINISHED_WITH_RETURN, a public outcome URL, and feedback that identifies one specific point where settlement status could be clearer.",
-    pool: gen(0.1),
-    reward: gen(0.02),
-    stake: gen(0.01),
-    minimumScore: 70n
+    proof: "Provide finalized Bradbury transaction evidence, a public outcome URL, and specific feedback about settlement clarity.",
+    pool: gen(0.1), reward: gen(0.02), stake: gen(0.01), minimumScore: 70n
   });
   const evidenceCampaignId = BigInt(evidenceCampaign.campaign.campaign_id);
   const evidenceOutcomeUrl = `${APP_URL}evidence/approved-campaign.html`;
@@ -592,7 +611,7 @@ async function main() {
   if (!approvedReview.submission.transaction_success || !approvedReview.submission.identity_match || !approvedReview.submission.task_completed) {
     throw new Error("Approved review did not persist all three substantive evidence checks");
   }
-  assertV2Report(approvedReview.submission, "Approved review");
+  assertV2Report(approvedReview.submission, "Approved review", "INDEPENDENT_COMPARATIVE");
   assertVerifiedReviewReceipt(approvedReview.receipt, contractAddress, "Approved review");
 
   const rejectedReview = await reviewSubmission(
@@ -607,7 +626,7 @@ async function main() {
   if (rejectedReview.submission.status !== "REJECTED" || rejectedReview.submission.identity_match) {
     throw new Error(`Expected identity-mismatch rejection, received ${rejectedReview.submission.status}`);
   }
-  assertV2Report(rejectedReview.submission, "Identity-mismatch review");
+  assertV2Report(rejectedReview.submission, "Identity-mismatch review", "INDEPENDENT_HARD_GATE_FEEDBACK");
   assertVerifiedReviewReceipt(rejectedReview.receipt, contractAddress, "Identity-mismatch review");
 
   const semanticReview = await reviewSubmission(
@@ -627,7 +646,7 @@ async function main() {
   ) {
     throw new Error(`Expected task-mismatch semantic rejection, received ${semanticReview.submission.status}`);
   }
-  assertV2Report(semanticReview.submission, "Semantic-mismatch review");
+  assertV2Report(semanticReview.submission, "Semantic-mismatch review", "INDEPENDENT_COMPARATIVE");
   assertVerifiedReviewReceipt(semanticReview.receipt, contractAddress, "Semantic-mismatch review");
 
   const claimHash = await checkpointedWrite(state, "claimApprovedReward", "claim approved reward", {
@@ -649,7 +668,7 @@ async function main() {
   if (claimed.status !== "CLAIMED") {
     throw new Error(`Approved payout was not claimed: ${claimed.status}`);
   }
-  assertV2Report(claimed, "Claimed approved review");
+  assertV2Report(claimed, "Claimed approved review", "INDEPENDENT_COMPARATIVE");
 
   const closedEvidenceCampaign = await closeCampaign(
     client,

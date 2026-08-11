@@ -187,7 +187,10 @@ for ($deployAttempt = 1; $deployAttempt -le 4; $deployAttempt++) {
     $deployOutput = Invoke-LoggedCommand -FilePath $genlayerCommand -Arguments @("deploy", "--contract", $ContractPath) -InputText $accountPassword
     break
   } catch {
-    $isBackpressure = $script:LastCommandOutput -match "pipeline backpressure|not currently accepting transactions|l1_sender_commit"
+    $isBackpressure = $script:LastCommandOutput -match (
+      "pipeline backpressure|not currently accepting transactions|l1_sender_commit|" +
+      "BlockPubdataLimitReached|intrinsic gas too low"
+    )
     $hasTransactionHash = $script:LastCommandOutput -match "Transaction Hash"
     if (-not $isBackpressure -or $hasTransactionHash -or $deployAttempt -eq 4) {
       throw

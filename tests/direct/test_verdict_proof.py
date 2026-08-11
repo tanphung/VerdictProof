@@ -16,7 +16,7 @@ TX_HASH = "0x760c748dbd931513d4f741f8323d30e050df431f6fd1f439389a4b1f5d430cb7"
 TX_URL = f"https://explorer-bradbury.genlayer.com/tx/{TX_HASH}"
 
 
-def mock_verified_evidence(direct_vm, sender, *, status=7, consensus_result=1, execution_result=1):
+def mock_receipt(direct_vm, sender, *, status=7, consensus_result=1, execution_result=1):
     sender_text = f"0x{sender.hex()}" if isinstance(sender, bytes) else str(sender)
     direct_vm.mock_web(
         r"^https://rpc-bradbury\.genlayer\.com$",
@@ -40,7 +40,35 @@ def mock_verified_evidence(direct_vm, sender, *, status=7, consensus_result=1, e
             ),
         },
     )
+
+
+def mock_verified_evidence(direct_vm, sender, *, status=7, consensus_result=1, execution_result=1):
+    mock_receipt(
+        direct_vm,
+        sender,
+        status=status,
+        consensus_result=consensus_result,
+        execution_result=execution_result,
+    )
     direct_vm.mock_web(r".*", {"status": 200, "body": "The public outcome page shows the completed campaign flow."})
+
+
+def mock_hard_gate_feedback(direct_vm, *, feedback=18, insight=13, originality=9):
+    direct_vm.mock_llm(
+        r".*Score written product feedback.*",
+        json.dumps(
+            {
+                "feedback_score": feedback,
+                "insight_score": insight,
+                "originality_score": originality,
+                "feedback_reason": "The feedback identifies a concrete product issue.",
+                "insight_reason": "The observation can guide a product improvement.",
+                "originality_reason": "The feedback is specific to this workflow.",
+                "improvement_recommendation": "Submit proof from the same tester wallet.",
+                "risk_flags": "WALLET_MISMATCH",
+            }
+        ),
+    )
 
 
 def create_demo_campaign(contract, direct_vm):
@@ -102,6 +130,11 @@ def approve_demo_submission(contract, direct_vm, direct_alice):
 def reviews_equivalent(contract, leader, validator, minimum_score=75):
     module = sys.modules[type(contract).__module__]
     return module._reviews_equivalent(leader, validator, minimum_score)
+
+
+def feedback_reviews_equivalent(contract, leader, validator):
+    module = sys.modules[type(contract).__module__]
+    return module._feedback_reviews_equivalent(leader, validator)
 
 
 def review_candidate(**overrides):
@@ -429,7 +462,7 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
     assert reviewed["usage_valid"] is True
     assert reviewed["proof_score"] == 36
     assert reviewed["reward_amount"] == str(REWARD)
-    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_1"
+    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_2"
     assert reviewed["validation_method"] == "INDEPENDENT_COMPARATIVE"
     assert reviewed["transaction_analysis"] == "Receipt reached AGREE with successful execution."
     assert reviewed["identity_analysis"] == "Receipt sender matches the tester wallet."
@@ -559,32 +592,151 @@ def test_evaluate_uses_rpc_sender_instead_of_llm_identity_claim(direct_vm, direc
     )
     direct_vm.value = 0
 
-    mock_verified_evidence(direct_vm, direct_bob)
-    direct_vm.mock_llm(
-        r".*Rubric, total 100.*",
-        json.dumps(
-            {
-                "score": 90,
-                "transaction_success": True,
-                "identity_match": True,
-                "task_completed": True,
-                "usage_valid": True,
-                "feedback_quality": "HIGH",
-                "proof_score": 38,
-                "feedback_score": 23,
-                "insight_score": 16,
-                "originality_score": 13,
-                "approved": True,
-                "reason_summary": "The submitted proof appears complete.",
-            }
-        ),
-    )
+    # Register no outcome-page mock: the hard-gate path must not render it.
+    mock_receipt(direct_vm, direct_bob)
+    mock_hard_gate_feedback(direct_vm)
 
     reviewed = contract.evaluate_submission(sid)
     assert reviewed["status"] == "REJECTED"
     assert reviewed["transaction_success"] is True
     assert reviewed["identity_match"] is False
+    assert reviewed["task_completed"] is False
     assert reviewed["usage_valid"] is False
+    assert reviewed["proof_score"] == 0
+    assert reviewed["score"] == 41
+    assert reviewed["validation_method"] == "INDEPENDENT_HARD_GATE_FEEDBACK"
+    assert "IDENTITY_MISMATCH" in reviewed["risk_flags"]
+    assert "FEEDBACK_DELTA_5" in reviewed["consensus_checks"]
+
+
+def test_evaluate_keeps_pending_until_receipt_is_finalized(direct_vm, direct_deploy, direct_alice):
+    contract = direct_deploy(CONTRACT)
+    cid = create_demo_campaign(contract, direct_vm)
+    direct_vm.sender = direct_alice
+    direct_vm.value = STAKE
+    sid = contract.submit_proof(
+        cid,
+        STAKE,
+        TX_URL,
+        "https://example.com/result/accepted-not-finalized",
+        "I completed the workflow and documented a specific confirmation-state issue for the product team.",
+    )
+    direct_vm.value = 0
+    mock_receipt(direct_vm, direct_alice, status=5)
+
+    with direct_vm.expect_revert("[TRANSIENT] evidence transaction is not finalized yet"):
+        contract.evaluate_submission(sid)
+
+    assert contract.get_submission(sid)["status"] == "PENDING"
+    assert contract.get_campaign(cid)["reward_pool"] == str(POOL)
+
+
+def test_finalized_execution_failure_uses_hard_gate_without_render(direct_vm, direct_deploy, direct_alice):
+    contract = direct_deploy(CONTRACT)
+    cid = create_demo_campaign(contract, direct_vm)
+    direct_vm.sender = direct_alice
+    direct_vm.value = STAKE
+    sid = contract.submit_proof(
+        cid,
+        STAKE,
+        TX_URL,
+        "https://example.com/result/must-not-render",
+        "The failed transaction still exposed a confusing signing message that should explain the recovery action.",
+    )
+    direct_vm.value = 0
+    mock_receipt(direct_vm, direct_alice, execution_result=0)
+    mock_hard_gate_feedback(direct_vm, feedback=20, insight=14, originality=10)
+
+    reviewed = contract.evaluate_submission(sid)
+
+    assert reviewed["status"] == "REJECTED"
+    assert reviewed["transaction_success"] is False
+    assert reviewed["identity_match"] is True
+    assert reviewed["task_completed"] is False
+    assert reviewed["proof_score"] == 0
+    assert reviewed["score"] == 45
+    assert reviewed["validation_method"] == "INDEPENDENT_HARD_GATE_FEEDBACK"
+    assert "TRANSACTION_FAILED" in reviewed["risk_flags"]
+    assert reviewed["feedback_reason"].startswith("The feedback identifies")
+
+
+def test_hard_gate_validator_rejects_malicious_partial_scores(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    leader = review_candidate(
+        transaction_success=False,
+        identity_match=True,
+        task_completed=False,
+        usage_valid=False,
+        approved=False,
+        score=60,
+        proof_score=0,
+        feedback_score=25,
+        insight_score=20,
+        originality_score=15,
+    )
+    validator = review_candidate(
+        transaction_success=False,
+        identity_match=True,
+        task_completed=False,
+        usage_valid=False,
+        approved=False,
+        score=31,
+        proof_score=0,
+        feedback_score=14,
+        insight_score=10,
+        originality_score=7,
+        feedback_quality="MEDIUM",
+    )
+
+    assert feedback_reviews_equivalent(contract, leader, validator) is False
+
+
+def test_hard_gate_validator_accepts_scores_within_component_tolerance(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    leader = review_candidate(
+        transaction_success=True,
+        identity_match=False,
+        task_completed=False,
+        usage_valid=False,
+        approved=False,
+        score=39,
+        proof_score=0,
+        feedback_score=17,
+        insight_score=13,
+        originality_score=9,
+        feedback_quality="MEDIUM",
+    )
+    validator = review_candidate(
+        transaction_success=True,
+        identity_match=False,
+        task_completed=False,
+        usage_valid=False,
+        approved=False,
+        score=31,
+        proof_score=0,
+        feedback_score=12,
+        insight_score=9,
+        originality_score=10,
+        feedback_quality="LOW",
+    )
+
+    assert feedback_reviews_equivalent(contract, leader, validator) is True
+
+
+def test_llm_error_does_not_rerun_leader_pipeline(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    module = sys.modules[type(contract).__module__]
+    calls = []
+
+    class LeaderError:
+        message = "[LLM_ERROR] malformed response"
+
+    def should_not_run():
+        calls.append(True)
+        return {}
+
+    assert module._handle_leader_error(LeaderError(), should_not_run) is False
+    assert calls == []
 
 
 def test_evaluate_keeps_stake_pending_when_external_evidence_is_unavailable(direct_vm, direct_deploy, direct_alice):
