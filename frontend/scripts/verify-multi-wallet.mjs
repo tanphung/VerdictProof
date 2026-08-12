@@ -683,6 +683,26 @@ async function main() {
     throw new Error("Close/refund verification did not start from the expected 0.10 GEN pool");
   }
 
+  const allCampaigns = await read(client, contractAddress, "list_campaigns", [0n, 50n]);
+  const duplicateEvidence = allCampaigns.campaigns?.find((item) =>
+    BigInt(item.campaign_id) !== evidenceCampaignId &&
+    item.title === evidenceCampaign.campaign.title &&
+    item.owner.toLowerCase() === approvedTester.account.address.toLowerCase() &&
+    item.status === "OPEN" &&
+    Number(item.submission_count) === 0
+  );
+  const closedDuplicateCampaign = duplicateEvidence
+    ? await closeCampaign(
+        client,
+        contractAddress,
+        approvedTester.account,
+        state,
+        BigInt(duplicateEvidence.campaign_id),
+        "duplicate evidence campaign cleanup",
+        "closeDuplicateEvidenceCampaign"
+      )
+    : null;
+
   const campaign = await read(client, contractAddress, "get_campaign", [primaryId]);
   if (Number(campaign.approved_count) !== 1 || Number(campaign.rejected_count) !== 2) {
     throw new Error("Campaign settlement counters do not reflect one approved and two rejected submissions");
@@ -725,6 +745,12 @@ async function main() {
       refundedAtto: closedEvidenceCampaign.before.reward_pool,
       rewardPoolAtto: closedEvidenceCampaign.campaign.reward_pool
     },
+    duplicateCampaignCleanup: closedDuplicateCampaign ? {
+      campaignId: closedDuplicateCampaign.campaign.campaign_id,
+      status: closedDuplicateCampaign.campaign.status,
+      refundedAtto: closedDuplicateCampaign.before.reward_pool,
+      transaction: txUrl(closedDuplicateCampaign.receipt.hash)
+    } : null,
     reviewTransactions,
     transactions: {
       deployment: txUrl(DEPLOYMENT_TX),
@@ -737,14 +763,20 @@ async function main() {
       reviewRejectedEvidence: txUrl(rejectedReview.receipt.hash),
       reviewSemanticRejection: txUrl(semanticReview.receipt.hash),
       claimApprovedReward: txUrl(claimReceipt.hash),
-      closeEvidenceCampaign: txUrl(closedEvidenceCampaign.receipt.hash)
+      closeEvidenceCampaign: txUrl(closedEvidenceCampaign.receipt.hash),
+      ...(closedDuplicateCampaign ? {
+        closeDuplicateEvidenceCampaign: txUrl(closedDuplicateCampaign.receipt.hash)
+      } : {})
     },
     consensus: {
       reviewApprovedEvidence: approvedReview.receipt,
       reviewRejectedEvidence: rejectedReview.receipt,
       reviewSemanticRejection: semanticReview.receipt,
       claimApprovedReward: claimReceipt,
-      closeEvidenceCampaign: closedEvidenceCampaign.receipt
+      closeEvidenceCampaign: closedEvidenceCampaign.receipt,
+      ...(closedDuplicateCampaign ? {
+        closeDuplicateEvidenceCampaign: closedDuplicateCampaign.receipt
+      } : {})
     },
     outcomes: {
       approved: claimed,
