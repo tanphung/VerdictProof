@@ -202,6 +202,22 @@ describe("genlayer frontend helpers", () => {
     });
   });
 
+  it("does not invent a validator total when Bradbury omits vote metadata", async () => {
+    const { getTransactionStatus } = await import("../src/lib/genlayer");
+    getTransaction.mockResolvedValueOnce({
+      status_name: "FINALIZED",
+      result_name: "AGREE",
+      txExecutionResultName: "FINISHED_WITH_RETURN",
+      recipient: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
+      data: { function_name: "evaluate_submission" }
+    });
+
+    const status = await getTransactionStatus("0xhash");
+
+    expect(status.validatorsAgreed).toBe(0);
+    expect(status.validatorsTotal).toBe(0);
+  });
+
   it("accepts only a finished contract execution", async () => {
     const { getTransactionStatus } = await import("../src/lib/genlayer");
     getTransaction.mockResolvedValueOnce({

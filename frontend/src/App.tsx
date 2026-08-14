@@ -155,6 +155,27 @@ function validationMethodLabel(method: string) {
   return method.split("_").join(" ");
 }
 
+const ONCHAIN_REPORT_FIELDS: Array<[keyof Submission, string]> = [
+  ["evidenceSummary", "evidence_summary"],
+  ["improvementRecommendation", "improvement_recommendation"],
+  ["riskFlags", "risk_flags"],
+  ["rubricVersion", "rubric_version"],
+  ["validationMethod", "validation_method"],
+  ["transactionAnalysis", "transaction_analysis"],
+  ["identityAnalysis", "identity_analysis"],
+  ["taskAnalysis", "task_analysis"],
+  ["proofReason", "proof_reason"],
+  ["feedbackReason", "feedback_reason"],
+  ["insightReason", "insight_reason"],
+  ["originalityReason", "originality_reason"],
+  ["consensusChecks", "consensus_checks"],
+  ["settlementExplanation", "settlement_explanation"]
+];
+
+function missingOnchainReportFields(submission: Submission) {
+  return ONCHAIN_REPORT_FIELDS.filter(([field]) => !String(submission[field] ?? "").trim()).map(([, label]) => label);
+}
+
 function normalizeCampaign(item: ChainCampaign): Campaign {
   return {
     campaignId: toNumber(item.campaign_id),
@@ -192,26 +213,26 @@ function normalizeSubmission(item: ChainSubmission, campaignTitle = "Live campai
     identityMatch: Boolean(item.identity_match),
     taskCompleted: Boolean(item.task_completed),
     usageValid: Boolean(item.usage_valid),
-    feedbackQuality: item.feedback_quality || "UNASSESSED",
+    feedbackQuality: item.feedback_quality ?? "",
     proofScore: toNumber(item.proof_score ?? 0),
     feedbackScore: toNumber(item.feedback_score ?? 0),
     insightScore: toNumber(item.insight_score ?? 0),
     originalityScore: toNumber(item.originality_score ?? 0),
     reasonSummary: item.reason_summary,
-    evidenceSummary: item.evidence_summary || "GenLayer review detail is not available for this submission.",
-    improvementRecommendation: item.improvement_recommendation || "Use a newer VerdictProof contract review to receive a specific recommendation.",
-    riskFlags: item.risk_flags || "UNSPECIFIED",
-    rubricVersion: item.rubric_version || "LEGACY",
-    validationMethod: item.validation_method || "LEGACY_VALIDATION",
-    transactionAnalysis: item.transaction_analysis || "Detailed transaction analysis is unavailable for this legacy review.",
-    identityAnalysis: item.identity_analysis || "Detailed identity analysis is unavailable for this legacy review.",
-    taskAnalysis: item.task_analysis || "Detailed task analysis is unavailable for this legacy review.",
-    proofReason: item.proof_reason || "Detailed proof rationale is unavailable for this legacy review.",
-    feedbackReason: item.feedback_reason || "Detailed feedback rationale is unavailable for this legacy review.",
-    insightReason: item.insight_reason || "Detailed insight rationale is unavailable for this legacy review.",
-    originalityReason: item.originality_reason || "Detailed originality rationale is unavailable for this legacy review.",
-    consensusChecks: item.consensus_checks || "Legacy review policy.",
-    settlementExplanation: item.settlement_explanation || "Settlement follows the stored verdict and campaign accounting.",
+    evidenceSummary: item.evidence_summary ?? "",
+    improvementRecommendation: item.improvement_recommendation ?? "",
+    riskFlags: item.risk_flags ?? "",
+    rubricVersion: item.rubric_version ?? "",
+    validationMethod: item.validation_method ?? "",
+    transactionAnalysis: item.transaction_analysis ?? "",
+    identityAnalysis: item.identity_analysis ?? "",
+    taskAnalysis: item.task_analysis ?? "",
+    proofReason: item.proof_reason ?? "",
+    feedbackReason: item.feedback_reason ?? "",
+    insightReason: item.insight_reason ?? "",
+    originalityReason: item.originality_reason ?? "",
+    consensusChecks: item.consensus_checks ?? "",
+    settlementExplanation: item.settlement_explanation ?? "",
     claimed: Boolean(item.claimed)
   };
 }
@@ -419,7 +440,7 @@ function loadStoredLiveState(): LiveState {
         identityMatch: Boolean(submission.identityMatch),
         taskCompleted: Boolean(submission.taskCompleted),
         usageValid: Boolean(submission.usageValid),
-        feedbackQuality: submission.feedbackQuality || "UNASSESSED",
+        feedbackQuality: submission.feedbackQuality ?? "",
         proofScore: Number(submission.proofScore || 0),
         feedbackScore: Number(submission.feedbackScore || 0),
         insightScore: Number(submission.insightScore || 0),
@@ -559,7 +580,7 @@ function App() {
           const hash = local?.hash ?? configured;
           if (!hash) return null;
           try {
-            const status = local?.status ?? (await getTransactionStatus(hash));
+            const status = await getTransactionStatus(hash);
             return isVerifiedReviewTransaction(status)
               ? ([submission.submissionId, { hash, status }] as const)
               : null;
@@ -1405,6 +1426,8 @@ function ReviewHistory({
           {sorted.map((submission, index) => {
             const campaign = campaigns.find((item) => item.campaignId === submission.campaignId);
             const reviewTx = consensus[submission.submissionId];
+            const missingReportFields = missingOnchainReportFields(submission);
+            const reportIdentity = [submission.validationMethod, submission.rubricVersion].filter(Boolean).join(" · ");
             const openFromUrl =
               typeof window !== "undefined" && window.location.hash === `#${submissionResultId(submission)}`;
             return (
@@ -1423,25 +1446,41 @@ function ReviewHistory({
               <p className="reason">{submission.reasonSummary}</p>
               <details className="full-consensus-report" open={index === 0 || openFromUrl}>
                 <summary>
-                  <span>Full validator report</span>
-                  <small>{submission.validationMethod.split("_").join(" ")} · {submission.rubricVersion}</small>
+                  <span>Full GenLayer consensus report</span>
+                  {reportIdentity ? <small>{reportIdentity.split("_").join(" ")}</small> : null}
                 </summary>
                 <div className="report-body">
+                  <div className="report-provenance">
+                    <strong>Finalized GenLayer state</strong>
+                    <p>
+                      Report fields are rendered from finalized contract state. Independent validators verify the decision,
+                      evidence gates, threshold side, and score tolerances. Narrative and rationale fields are the leader report
+                      committed after validator agreement; individual validator narratives are not published.
+                    </p>
+                  </div>
+                  {missingReportFields.length > 0 ? (
+                    <div className="report-integrity-warning" role="status">
+                      <strong>Incomplete on-chain report</strong>
+                      <p>Contract fields not provided: {missingReportFields.join(", ")}. VerdictProof does not synthesize missing analysis.</p>
+                    </div>
+                  ) : null}
                   <section className="consensus-proof" aria-label="GenLayer consensus result">
                     <div>
-                      <span className="panel-overline">Consensus proof</span>
-                      <h5>{validationMethodLabel(submission.validationMethod)}</h5>
-                      <p>{submission.consensusChecks.split("|").join(" · ")}</p>
+                      <span className="panel-overline">Independent validator agreement</span>
+                      {submission.validationMethod ? <h5>{validationMethodLabel(submission.validationMethod)}</h5> : null}
+                      {submission.consensusChecks ? <p>{submission.consensusChecks.split("|").join(" · ")}</p> : null}
                     </div>
                     {reviewTx ? (
                       <div className="consensus-metrics">
                         <Metric label="Lifecycle" value={reviewTx.status.statusName} />
                         <Metric label="Result" value={reviewTx.status.resultName} />
                         <Metric label="Execution" value={reviewTx.status.executionResultName} />
-                        <Metric
-                          label="Validator votes"
-                          value={`${reviewTx.status.validatorsAgreed}/${reviewTx.status.validatorsTotal} AGREE`}
-                        />
+                        {reviewTx.status.validatorsTotal > 0 ? (
+                          <Metric
+                            label="Validator votes"
+                            value={`${reviewTx.status.validatorsAgreed}/${reviewTx.status.validatorsTotal} AGREE`}
+                          />
+                        ) : null}
                         <a href={explorerTx(reviewTx.hash)} target="_blank" rel="noreferrer">
                           Verify review transaction <ExternalLink size={12} />
                         </a>
@@ -1522,27 +1561,27 @@ function ReviewHistory({
                   </section>
 
                   <div className="review-detail-grid">
-                    <div>
+                    {submission.evidenceSummary ? <div>
                       <span>Evidence analysis</span>
                       <p>{submission.evidenceSummary}</p>
-                    </div>
-                    <div>
+                    </div> : null}
+                    {submission.improvementRecommendation ? <div>
                       <span>Recommendation</span>
                       <p>{submission.improvementRecommendation}</p>
-                    </div>
-                    <div>
+                    </div> : null}
+                    {submission.settlementExplanation ? <div>
                       <span>Settlement</span>
                       <p>{submission.settlementExplanation}</p>
-                    </div>
-                    <div>
+                    </div> : null}
+                    {submission.riskFlags ? <div>
                       <span>Risk flags</span>
                       <p>{submission.riskFlags}</p>
-                    </div>
+                    </div> : null}
                   </div>
                 </div>
               </details>
               <div className="history-links">
-                <span>{submission.riskFlags}</span>
+                {submission.riskFlags ? <span>{submission.riskFlags}</span> : null}
                 <LinkChip
                   href={submission.transactionUrl}
                   label="Proof / tx note"
@@ -1554,7 +1593,7 @@ function ReviewHistory({
                   href={submissionResultHref(submission)}
                   label="Open full report"
                   detail={`Dashboard #${submission.campaignId}-${submission.submissionId}`}
-                  title="Open the full consensus-approved validator report"
+                  title="Open the full GenLayer consensus report"
                 />
                 <LinkChip
                   href={explorerContract()}
@@ -1584,7 +1623,7 @@ function VerificationFact({ label, detail, passed }: { label: string; detail: st
       {passed ? <CheckCircle2 size={14} /> : <X size={14} />}
       <div>
         <strong>{label}</strong>
-        <small>{detail}</small>
+        {detail ? <small>{detail}</small> : null}
       </div>
     </div>
   );
@@ -1828,10 +1867,12 @@ function MySubmissions({
               />
             </div>
             <p className="reason">{submission.reasonSummary}</p>
-            <div className="mini-review-detail">
-              <span>{submission.riskFlags}</span>
-              <p>{submission.evidenceSummary}</p>
-            </div>
+            {submission.riskFlags || submission.evidenceSummary ? (
+              <div className="mini-review-detail">
+                {submission.riskFlags ? <span>{submission.riskFlags}</span> : null}
+                {submission.evidenceSummary ? <p>{submission.evidenceSummary}</p> : null}
+              </div>
+            ) : null}
             <SubmissionLinks submission={submission} />
             {submission.status === "APPROVED" ? (
               <button className="primary-button full" onClick={() => onClaim(submission)} disabled={busy === `claim-${submission.submissionId}`}>
@@ -1979,7 +2020,7 @@ function SubmissionLinks({ submission }: { submission: Submission }) {
         href={submissionResultHref(submission)}
         label="Open full report"
         detail={`Dashboard #${submission.campaignId}-${submission.submissionId}`}
-        title="Open the full consensus-approved validator report"
+        title="Open the full GenLayer consensus report"
       />
       <LinkChip
         href={explorerContract()}

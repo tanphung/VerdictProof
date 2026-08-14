@@ -61,8 +61,10 @@ demonstrated.
    V2.3 Bradbury contract.
 2. Open the sponsor campaign and show the task, proof requirement, reward,
    stake, threshold, and finalized campaign transaction.
-3. Open the approved submission's full validator report. Show all three hard
-   gates, four anchored rubric components, rationales, risk flags, settlement
+3. Open the approved submission's full GenLayer consensus report. Explain that
+   validators independently agree on the hard gates, decision, threshold side, and score
+   tolerances, while narrative fields are the consensus-committed leader report. Show all
+   three hard gates, four anchored rubric components, rationales, risk flags, settlement
    explanation, five validator votes, and the verified explorer link.
 4. Open the identity rejection and point out that receipt execution passed but
    the sender did not match the tester, so the outcome page was not rendered as

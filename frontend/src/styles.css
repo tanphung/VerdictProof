@@ -1159,6 +1159,32 @@ textarea:focus {
   padding: 0 14px 14px;
 }
 
+.report-provenance,
+.report-integrity-warning {
+  padding: 12px 14px;
+  border: 1px solid rgba(22, 143, 189, 0.22);
+  background: #f1f8fa;
+}
+
+.report-provenance strong,
+.report-integrity-warning strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.report-provenance p,
+.report-integrity-warning p {
+  margin-top: 5px;
+  color: #55717b;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.report-integrity-warning {
+  border-color: rgba(210, 145, 40, 0.35);
+  background: #fff8eb;
+}
+
 .consensus-proof {
   min-width: 0;
   max-width: 100%;

@@ -226,7 +226,7 @@ export async function getTransactionStatus(hash: string): Promise<TxStatus> {
 
   const round = tx.lastRound ?? tx.consensus_data?.leader_receipt?.[0] ?? null;
   const votes = round?.validatorVotesName ?? [];
-  const validatorsTotal = Math.max(votes.length, round?.roundValidators?.length ?? Number(INITIAL_VALIDATORS));
+  const validatorsTotal = Math.max(votes.length, round?.roundValidators?.length ?? 0);
   const validatorsAgreed = votes.filter((vote) => vote === "AGREE").length;
   const rotationsLeft = Number(tx.lastRound?.rotationsLeft ?? 0);
   const statusName = String(tx.status_name ?? tx.statusName ?? tx.status ?? "PENDING").toUpperCase();

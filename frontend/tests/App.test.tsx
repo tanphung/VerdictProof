@@ -446,13 +446,89 @@ describe("VerdictProof app live wallet flow", () => {
     await screen.findByText("Independent validators approved the submitted product evidence.");
     await user.click(screen.getByRole("button", { name: /^Dashboard$/i }));
 
-    expect(await screen.findByText("Full validator report")).toBeInTheDocument();
+    expect(await screen.findByText("Full GenLayer consensus report")).toBeInTheDocument();
+    expect(screen.getByText("Finalized GenLayer state")).toBeInTheDocument();
+    expect(screen.getByText(/Narrative and rationale fields are the leader report committed after validator agreement/i)).toBeInTheDocument();
+    expect(screen.getByText("Independent validator agreement")).toBeInTheDocument();
     expect(screen.getByText("Independent comparative semantic validation")).toBeInTheDocument();
     expect(screen.getByText("Campaign task")).toBeInTheDocument();
     expect(screen.getByText("The Bradbury receipt reached consensus AGREE and execution finished successfully.")).toBeInTheDocument();
     expect(screen.getByText("Strong receipt, ownership, and outcome evidence.")).toBeInTheDocument();
     expect(screen.getByText("Stake is returned and the reserved campaign reward is unlocked.")).toBeInTheDocument();
     expect(screen.getByText("State committed by GenLayer consensus")).toBeInTheDocument();
+  });
+
+  it("never synthesizes analysis when finalized contract report fields are missing", async () => {
+    const incomplete = {
+      ...reviewedSubmission(),
+      evidence_summary: undefined,
+      improvement_recommendation: undefined,
+      risk_flags: undefined,
+      transaction_analysis: undefined,
+      identity_analysis: undefined,
+      task_analysis: undefined,
+      proof_reason: undefined,
+      feedback_reason: undefined,
+      insight_reason: undefined,
+      originality_reason: undefined,
+      consensus_checks: undefined,
+      settlement_explanation: undefined
+    };
+    liveCampaigns = [campaign(1, "Checkout QA Campaign", 1)];
+    readContract.mockImplementation(async (method: string) => {
+      if (method === "list_campaigns") return { campaigns: liveCampaigns, count: 1, total: 1 };
+      if (method === "list_campaign_submissions") return { submissions: [incomplete], count: 1 };
+      throw new Error(`Unexpected read method: ${method}`);
+    });
+
+    render(<App />);
+    await screen.findByText(incomplete.reason_summary);
+    await userEvent.click(screen.getByRole("button", { name: /^Dashboard$/i }));
+
+    expect(await screen.findByText("Incomplete on-chain report")).toBeInTheDocument();
+    expect(screen.getByText(/VerdictProof does not synthesize missing analysis/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Detailed transaction analysis is unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Settlement follows the stored verdict/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Use a newer VerdictProof contract review/i)).not.toBeInTheDocument();
+  });
+
+  it("revalidates a cached local review hash with Bradbury RPC before showing consensus metadata", async () => {
+    window.localStorage.setItem(
+      "verdictproof:bradbury:0xfb7632b4bbe41d9fa986ae321e2bcaa1eea2478a:VERDICTPROOF_V2_1:tx-feed",
+      JSON.stringify([{
+        id: txHash,
+        hash: txHash,
+        label: "Run AI review",
+        action: "review",
+        submissionId: 1,
+        campaignId: 1,
+        createdAt: Date.now(),
+        status: {
+          stage: "finalized",
+          statusName: "FINALIZED",
+          resultName: "AGREE",
+          executionResultName: "FINISHED_WITH_RETURN",
+          validatorsAgreed: 5,
+          validatorsTotal: 5,
+          recipient: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
+          functionName: "evaluate_submission"
+        }
+      }])
+    );
+    liveCampaigns = [campaign(1, "Checkout QA Campaign", 1)];
+    readContract.mockImplementation(async (method: string) => {
+      if (method === "list_campaigns") return { campaigns: liveCampaigns, count: 1, total: 1 };
+      if (method === "list_campaign_submissions") return { submissions: [reviewedSubmission()], count: 1 };
+      throw new Error(`Unexpected read method: ${method}`);
+    });
+
+    render(<App />);
+    await screen.findByText(reviewedSubmission().reason_summary);
+    await userEvent.click(screen.getByRole("button", { name: /^Dashboard$/i }));
+
+    await waitFor(() => expect(getTransactionStatus).toHaveBeenCalledWith(txHash));
+    expect(await screen.findByText("State committed by GenLayer consensus")).toBeInTheDocument();
+    expect(screen.queryByText("Validator votes")).not.toBeInTheDocument();
   });
 
   it("labels hard-gate reports without claiming semantic task evaluation", async () => {

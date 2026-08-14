@@ -99,7 +99,9 @@ Each reviewed submission stores the three evidence gates, four rubric scores
 and rationales, transaction/identity/task analyses, rubric version, comparative
 validation method, approval status, evidence summary, recommendation, risk
 flags, consensus checks, and settlement explanation. The frontend exposes this
-as an expanded full validator report instead of only an opaque score.
+as an expanded GenLayer consensus report instead of only an opaque score. Narrative and
+rationale fields are the leader report committed after independent validator agreement;
+VerdictProof does not claim that GenLayer publishes per-validator narrative transcripts.
 
 The RPC and web-access behavior follows the official GenLayer documentation:
 [GenLayer Node transaction receipt](https://docs.genlayer.com/api-references/genlayer-node/gen/gen_getTransactionReceipt)
