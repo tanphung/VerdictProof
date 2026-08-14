@@ -1,5 +1,7 @@
 # VerdictProof
 
+[![CI](https://github.com/tanphung/VerdictProof/actions/workflows/ci.yml/badge.svg)](https://github.com/tanphung/VerdictProof/actions/workflows/ci.yml)
+
 **Product-testing campaigns settled by independent GenLayer validation.**
 
 VerdictProof lets a sponsor fund a testing campaign and define a real product task. A tester stakes GEN, completes the task, and submits a finalized Bradbury transaction, public outcome evidence, and written feedback. GenLayer validators independently assess the evidence before the Intelligent Contract settles the submission as approved or rejected.
@@ -144,6 +146,8 @@ The artifact contains public addresses, transaction hashes, verdict fields, and 
 | Production dependency audit | 0 vulnerabilities |
 | Production build | Pass |
 | Desktop and mobile smoke tests | Pass |
+
+GitHub Actions runs release-artifact integrity checks, GenVM lint, direct contract tests, the frontend audit, TypeScript checks, tests, and production build on every pull request and push to `main`. StudioNet consensus testing is available as the manual **StudioNet Integration** workflow. Bradbury multi-wallet writes remain an explicit release procedure so CI never holds wallet secrets or creates unintended transactions.
 
 The pinned GenVM runner is intentionally retained because it matches the deployed and verified contract source. A newer runner notification alone is not treated as a reason to change the release.
 
