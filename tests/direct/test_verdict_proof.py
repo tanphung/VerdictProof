@@ -455,24 +455,24 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
 
     reviewed = contract.evaluate_submission(sid)
     assert reviewed["status"] == "APPROVED"
-    assert reviewed["score"] == 87
+    assert reviewed["score"] == 88
     assert reviewed["transaction_success"] is True
     assert reviewed["identity_match"] is True
     assert reviewed["task_completed"] is True
     assert reviewed["usage_valid"] is True
-    assert reviewed["proof_score"] == 36
+    assert reviewed["proof_score"] == 40
     assert reviewed["reward_amount"] == str(REWARD)
-    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_2"
+    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_3"
     assert reviewed["validation_method"] == "INDEPENDENT_COMPARATIVE"
-    assert reviewed["transaction_analysis"] == "Receipt reached AGREE with successful execution."
-    assert reviewed["identity_analysis"] == "Receipt sender matches the tester wallet."
-    assert reviewed["task_analysis"].startswith("Escrow creation")
-    assert reviewed["proof_reason"].startswith("Strong public")
+    assert reviewed["transaction_analysis"].startswith("Finalized receipt")
+    assert "matches tester" in reviewed["identity_analysis"]
+    assert reviewed["task_analysis"]
+    assert reviewed["proof_reason"].startswith("Full proof credit")
     assert reviewed["feedback_reason"].startswith("Feedback names")
     assert reviewed["insight_reason"].startswith("The recommendation")
     assert reviewed["originality_reason"].startswith("The observation")
-    assert "TOTAL_SCORE_DELTA_12" in reviewed["consensus_checks"]
-    assert reviewed["settlement_explanation"].startswith("Stake and reward")
+    assert "VALID_TOTAL_DELTA_12" in reviewed["consensus_checks"]
+    assert reviewed["settlement_explanation"].startswith("Approved evidence")
     assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
 
 
@@ -525,7 +525,7 @@ def test_evaluate_rejects_generic_feedback_and_slashes_stake(direct_vm, direct_d
 
     reviewed = contract.evaluate_submission(sid)
     assert reviewed["status"] == "REJECTED"
-    assert reviewed["score"] == 32
+    assert reviewed["score"] == 44
     assert reviewed["reward_amount"] == "0"
     assert contract.get_campaign(cid)["reward_pool"] == str(POOL + STAKE)
 
@@ -568,7 +568,8 @@ def test_evaluate_rejects_high_score_when_usage_proof_invalid(direct_vm, direct_
 
     reviewed = contract.evaluate_submission(sid)
     assert reviewed["status"] == "REJECTED"
-    assert reviewed["score"] == 82
+    assert reviewed["score"] == 65
+    assert reviewed["proof_score"] == 20
     assert reviewed["transaction_success"] is True
     assert reviewed["identity_match"] is True
     assert reviewed["task_completed"] is False
@@ -658,6 +659,33 @@ def test_finalized_execution_failure_uses_hard_gate_without_render(direct_vm, di
     assert reviewed["validation_method"] == "INDEPENDENT_HARD_GATE_FEEDBACK"
     assert "TRANSACTION_FAILED" in reviewed["risk_flags"]
     assert reviewed["feedback_reason"].startswith("The feedback identifies")
+
+
+def test_cross_origin_outcome_uses_objective_gate_without_render(direct_vm, direct_deploy, direct_alice):
+    contract = direct_deploy(CONTRACT)
+    cid = create_demo_campaign(contract, direct_vm)
+    direct_vm.sender = direct_alice
+    direct_vm.value = STAKE
+    sid = contract.submit_proof(
+        cid,
+        STAKE,
+        TX_URL,
+        "https://unrelated.example.org/not-product-evidence",
+        "The transaction is finalized, but this outcome page is unrelated to the campaign product and must be rejected.",
+    )
+    direct_vm.value = 0
+    mock_receipt(direct_vm, direct_alice)
+    mock_hard_gate_feedback(direct_vm)
+
+    reviewed = contract.evaluate_submission(sid)
+
+    assert reviewed["status"] == "REJECTED"
+    assert reviewed["transaction_success"] is True
+    assert reviewed["identity_match"] is True
+    assert reviewed["task_completed"] is False
+    assert reviewed["proof_score"] == 0
+    assert "OUTCOME_ORIGIN_MISMATCH" in reviewed["risk_flags"]
+    assert reviewed["validation_method"] == "INDEPENDENT_HARD_GATE_FEEDBACK"
 
 
 def test_hard_gate_validator_rejects_malicious_partial_scores(direct_deploy):
@@ -915,16 +943,68 @@ def test_comparative_validator_rejects_threshold_disagreement(direct_deploy):
 
 def test_comparative_validator_accepts_bounded_score_variation(direct_deploy):
     contract = direct_deploy(CONTRACT)
-    leader = review_candidate()
+    leader = review_candidate(score=92, proof_score=40)
     validator = review_candidate(
-        score=82,
-        proof_score=33,
+        score=86,
+        proof_score=40,
         feedback_score=20,
         insight_score=16,
-        originality_score=13,
+        originality_score=10,
     )
 
     assert reviews_equivalent(contract, leader, validator) is True
+
+
+def test_invalid_evidence_accepts_observed_bradbury_score_variance(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    leader = review_candidate(
+        task_completed=False,
+        usage_valid=False,
+        approved=False,
+        score=56,
+        proof_score=20,
+        feedback_score=20,
+        insight_score=10,
+        originality_score=6,
+    )
+    validator = review_candidate(
+        task_completed=False,
+        usage_valid=False,
+        approved=False,
+        score=51,
+        proof_score=20,
+        feedback_score=10,
+        insight_score=12,
+        originality_score=9,
+    )
+
+    assert reviews_equivalent(contract, leader, validator) is True
+
+
+def test_invalid_evidence_rejects_unbounded_or_manipulated_score(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    leader = review_candidate(
+        task_completed=False,
+        usage_valid=False,
+        approved=False,
+        score=80,
+        proof_score=20,
+        feedback_score=25,
+        insight_score=20,
+        originality_score=15,
+    )
+    validator = review_candidate(
+        task_completed=False,
+        usage_valid=False,
+        approved=False,
+        score=20,
+        proof_score=20,
+        feedback_score=0,
+        insight_score=0,
+        originality_score=0,
+    )
+
+    assert reviews_equivalent(contract, leader, validator) is False
 
 
 def test_comparative_validator_requires_exact_evidence_gates(direct_deploy):

@@ -12,7 +12,7 @@ Then use the GenLayer CLI workflow for the target environment. After deploy,
 set the frontend environment variable:
 
 ```bash
-VITE_VERDICTPROOF_CONTRACT_ADDRESS=0xDe0bf3732FaB463f5DA46D09c303a3D3d4390DA0
+VITE_VERDICTPROOF_CONTRACT_ADDRESS=0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed
 ```
 
 Do not use `genlayernode` for this dApp unless validator node setup is
@@ -49,16 +49,17 @@ The helper sets the GenLayer CLI network to `testnet-bradbury`, imports/uses the
 account, deploys `contracts/verdict_proof.py`, and writes the deployed contract
 address into `frontend\.env`.
 
-The current V2.1 Bradbury deployment is
-`0xDe0bf3732FaB463f5DA46D09c303a3D3d4390DA0`:
-https://explorer-bradbury.genlayer.com/address/0xDe0bf3732FaB463f5DA46D09c303a3D3d4390DA0
+The current V2.3 Bradbury deployment is
+`0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed`:
+https://explorer-bradbury.genlayer.com/address/0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed
 
 Its deployment transaction finalized with consensus `AGREE`, execution
 `FINISHED_WITH_RETURN`, and 5/5 recorded `AGREE` votes. The deployed source and
 local source have the same SHA-256
-`3f18b1efc1cac4f5e428958d96922aecdea78e6f73d8bbefb65cf9fb351af22a`.
-Do not call the V2.1 multi-wallet artifact complete until `gen_getContractCode`
-and `gen_call` can read this address.
+`5c5624351a4de6f1e79c58ce7595b7837053b03128637e7cfbf7e95776da4d33`.
+The verification runner also requires the schema generated from local source to
+exactly match the deployed schema. Do not call the V2.3 artifact complete until
+the full finalized multi-wallet flow succeeds.
 
 For real Bradbury verification, use the three distinct funded wallets:
 
@@ -73,4 +74,6 @@ campaign close/refund. A successful run requires consensus `AGREE` plus
 execution `FINISHED_WITH_RETURN` and writes public addresses, detailed reports,
 vote metadata when returned by RPC, and explorer links to
 `deploy\latest-bradbury-verification.json`; private keys are never written to
-the report.
+the report. Before writing, the runner also compares the serialized artifact
+against every configured private key, mnemonic, password, and secret value and
+aborts if any sensitive value appears.

@@ -1552,9 +1552,9 @@ function ReviewHistory({
                 />
                 <LinkChip
                   href={submissionResultHref(submission)}
-                  label="AI result"
+                  label="Open full report"
                   detail={`Dashboard #${submission.campaignId}-${submission.submissionId}`}
-                  title="Open this AI review result in the dashboard"
+                  title="Open the full consensus-approved validator report"
                 />
                 <LinkChip
                   href={explorerContract()}
@@ -1977,9 +1977,9 @@ function SubmissionLinks({ submission }: { submission: Submission }) {
       />
       <LinkChip
         href={submissionResultHref(submission)}
-        label="AI result"
+        label="Open full report"
         detail={`Dashboard #${submission.campaignId}-${submission.submissionId}`}
-        title="Open the AI review result in the dashboard"
+        title="Open the full consensus-approved validator report"
       />
       <LinkChip
         href={explorerContract()}

@@ -10,6 +10,9 @@ networks:
   studionet:
     default_wait_interval: 7000
     default_wait_retries: 100
+    accounts:
+      - "${ACCOUNT_PRIVATE_KEY}"
+      - "${VERDICTPROOF_APPROVED_TESTER_PRIVATE_KEY}"
   testnet_bradbury:
     url: "https://rpc-bradbury.genlayer.com"
     accounts:

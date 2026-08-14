@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { privateKeyToAccount } from "viem/accounts";
@@ -11,8 +12,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXPLORER = "https://explorer-bradbury.genlayer.com";
 const APP_URL = "https://verdictproof.vercel.app/";
 const INITIAL_VALIDATORS = 5n;
-const DEPLOYMENT_TX = "0x54e9a355d7a78063cca3911444419cdb68d4e4a005f21476f537909b7b533fd4";
-const DEPLOYED_SOURCE_SHA256 = "beb10785ccf2544c409d7c2405cfb3de076323d5339f86a457095c46c5c62cc5";
+const DEPLOYMENT_TX = "0x7cb311efeef196d8fcdfae904e43cc21ab1767517453135aa11fc3b3c0a24e6a";
+const DEPLOYED_SOURCE_SHA256 = "5c5624351a4de6f1e79c58ce7595b7837053b03128637e7cfbf7e95776da4d33";
 const VERIFICATION_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-verification-state.json");
 const publicClient = createPublicClient({
   chain: testnetBradbury,
@@ -45,6 +46,21 @@ function loadVerificationState() {
 
 function saveVerificationState(state) {
   writeFileSync(VERIFICATION_STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+function assertPublicArtifactHasNoSecrets(report, env) {
+  const serialized = JSON.stringify(report).toLowerCase();
+  for (const [name, rawValue] of Object.entries(env)) {
+    if (!/private_key|mnemonic|password|secret/i.test(name)) continue;
+    const value = String(rawValue ?? "").trim().toLowerCase();
+    if (!value) continue;
+    const candidates = new Set([value, value.startsWith("0x") ? value.slice(2) : value]);
+    for (const candidate of candidates) {
+      if (candidate.length >= 12 && serialized.includes(candidate)) {
+        throw new Error(`Public verification artifact contains sensitive value from ${name}`);
+      }
+    }
+  }
 }
 
 function loadAccount(env, role, keyName, addressName) {
@@ -470,7 +486,7 @@ async function closeCampaign(client, contractAddress, account, state, campaignId
   return { before, campaign, receipt };
 }
 
-function assertV2Report(submission, label, expectedValidationMethod) {
+function assertV3Report(submission, label, expectedValidationMethod) {
   const requiredTextFields = [
     "rubric_version",
     "validation_method",
@@ -489,12 +505,41 @@ function assertV2Report(submission, label, expectedValidationMethod) {
       throw new Error(`${label} is missing detailed report field ${field}`);
     }
   }
-  if (submission.rubric_version !== "VERDICTPROOF_V2_2") {
+  if (submission.rubric_version !== "VERDICTPROOF_V2_3") {
     throw new Error(`${label} used unexpected rubric ${submission.rubric_version}`);
   }
   if (submission.validation_method !== expectedValidationMethod) {
     throw new Error(`${label} used ${submission.validation_method}, expected ${expectedValidationMethod}`);
   }
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalJson(value[key])]));
+  }
+  return value;
+}
+
+async function verifyDeploymentMatchesLocal(client, contractAddress) {
+  const localSource = readFileSync(resolve(ROOT, "contracts", "verdict_proof.py"), "utf8");
+  const localSha256 = createHash("sha256").update(localSource).digest("hex");
+  if (localSha256 !== DEPLOYED_SOURCE_SHA256) {
+    throw new Error(`Local source SHA ${localSha256} does not match pinned deployment SHA ${DEPLOYED_SOURCE_SHA256}`);
+  }
+  const [deployedSource, localSchema, deployedSchema] = await Promise.all([
+    client.getContractCode(contractAddress),
+    client.getContractSchemaForCode(localSource),
+    client.getContractSchema(contractAddress)
+  ]);
+  const deployedSha256 = createHash("sha256").update(deployedSource).digest("hex");
+  if (deployedSource !== localSource || deployedSha256 !== localSha256) {
+    throw new Error(`Deployed source SHA ${deployedSha256} does not exactly match local source SHA ${localSha256}`);
+  }
+  if (JSON.stringify(canonicalJson(localSchema)) !== JSON.stringify(canonicalJson(deployedSchema))) {
+    throw new Error("Deployed schema does not match schema generated from local source");
+  }
+  return { localSha256, deployedSha256, sourceExact: true, schemaExact: true };
 }
 
 function assertVerifiedReviewReceipt(receipt, contractAddress, label) {
@@ -540,14 +585,15 @@ async function main() {
     state = { contractAddress, transactions: {} };
   }
   saveVerificationState(state);
-  const deploymentReceipt = await waitExecuted(client, DEPLOYMENT_TX, "VerdictProof V2 deployment");
+  const deploymentReceipt = await waitExecuted(client, DEPLOYMENT_TX, "VerdictProof V2.3 deployment");
   const deploymentFinalizationEvmTx = await finalizeWhenReady(
     client,
     sponsor.account,
     DEPLOYMENT_TX,
     contractAddress,
-    "VerdictProof V2 deployment"
+    "VerdictProof V2.3 deployment"
   );
+  const deploymentVerification = await verifyDeploymentMatchesLocal(client, contractAddress);
   const primary = await createCampaign(client, contractAddress, sponsor.account, state, {
     txKey: "createPrimaryCampaign",
     title: "First-Time Sponsor Campaign Launch Study",
@@ -592,7 +638,7 @@ async function main() {
     campaignId: primaryId,
     stake: gen(0.02),
     transactionUrl: txUrl(evidenceCampaign.receipt.hash),
-    outcomeUrl: "https://www.iana.org/help/example-domains",
+    outcomeUrl: `${APP_URL}evidence/semantic-mismatch.html`,
     feedback: "The Bradbury transaction is mine and finalized successfully, but this outcome URL is deliberately unrelated to VerdictProof and cannot demonstrate that the requested campaign appeared in the live board. A strong review must reject transaction-shaped evidence when the rendered product outcome does not substantiate the task, even if wallet ownership and execution are valid."
   });
 
@@ -611,7 +657,7 @@ async function main() {
   if (!approvedReview.submission.transaction_success || !approvedReview.submission.identity_match || !approvedReview.submission.task_completed) {
     throw new Error("Approved review did not persist all three substantive evidence checks");
   }
-  assertV2Report(approvedReview.submission, "Approved review", "INDEPENDENT_COMPARATIVE");
+  assertV3Report(approvedReview.submission, "Approved review", "INDEPENDENT_COMPARATIVE");
   assertVerifiedReviewReceipt(approvedReview.receipt, contractAddress, "Approved review");
 
   const rejectedReview = await reviewSubmission(
@@ -626,7 +672,7 @@ async function main() {
   if (rejectedReview.submission.status !== "REJECTED" || rejectedReview.submission.identity_match) {
     throw new Error(`Expected identity-mismatch rejection, received ${rejectedReview.submission.status}`);
   }
-  assertV2Report(rejectedReview.submission, "Identity-mismatch review", "INDEPENDENT_HARD_GATE_FEEDBACK");
+  assertV3Report(rejectedReview.submission, "Identity-mismatch review", "INDEPENDENT_HARD_GATE_FEEDBACK");
   assertVerifiedReviewReceipt(rejectedReview.receipt, contractAddress, "Identity-mismatch review");
 
   const semanticReview = await reviewSubmission(
@@ -646,7 +692,7 @@ async function main() {
   ) {
     throw new Error(`Expected task-mismatch semantic rejection, received ${semanticReview.submission.status}`);
   }
-  assertV2Report(semanticReview.submission, "Semantic-mismatch review", "INDEPENDENT_COMPARATIVE");
+  assertV3Report(semanticReview.submission, "Semantic-mismatch review", "INDEPENDENT_COMPARATIVE");
   assertVerifiedReviewReceipt(semanticReview.receipt, contractAddress, "Semantic-mismatch review");
 
   const claimHash = await checkpointedWrite(state, "claimApprovedReward", "claim approved reward", {
@@ -668,7 +714,7 @@ async function main() {
   if (claimed.status !== "CLAIMED") {
     throw new Error(`Approved payout was not claimed: ${claimed.status}`);
   }
-  assertV2Report(claimed, "Claimed approved review", "INDEPENDENT_COMPARATIVE");
+  assertV3Report(claimed, "Claimed approved review", "INDEPENDENT_COMPARATIVE");
 
   const closedEvidenceCampaign = await closeCampaign(
     client,
@@ -722,7 +768,8 @@ async function main() {
     deployment: {
       transaction: txUrl(DEPLOYMENT_TX),
       sourceSha256: DEPLOYED_SOURCE_SHA256,
-      exactLocalSourceMatch: true,
+      exactLocalSourceMatch: deploymentVerification.sourceExact,
+      exactLocalSchemaMatch: deploymentVerification.schemaExact,
       consensus: deploymentReceipt,
       finalizationEvmTransaction: deploymentFinalizationEvmTx
     },
@@ -784,6 +831,7 @@ async function main() {
       semanticRejected: semanticReview.submission
     }
   };
+  assertPublicArtifactHasNoSecrets(report, env);
   writeFileSync(resolve(ROOT, "deploy", "latest-bradbury-verification.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
   state.completedAt = report.generatedAt;
   saveVerificationState(state);

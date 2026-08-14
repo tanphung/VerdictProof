@@ -39,12 +39,14 @@ MAX_CALLDATA_CHARS = 400
 MAX_PROMPT_TASK_CHARS = 600
 MAX_PROMPT_PROOF_CHARS = 600
 MAX_PROMPT_FEEDBACK_CHARS = 1000
-RUBRIC_VERSION = "VERDICTPROOF_V2_2"
+RUBRIC_VERSION = "VERDICTPROOF_V2_3"
 VALIDATION_METHOD = "INDEPENDENT_COMPARATIVE"
 HARD_GATE_VALIDATION_METHOD = "INDEPENDENT_HARD_GATE_FEEDBACK"
 CONSENSUS_CHECKS = (
-    "EXACT_EVIDENCE_GATES|EXACT_APPROVAL|TOTAL_SCORE_DELTA_12|"
-    "PROOF_DELTA_8|FEEDBACK_DELTA_5|INSIGHT_DELTA_4|ORIGINALITY_DELTA_3"
+    "EXACT_EVIDENCE_GATES|EXACT_APPROVAL|DETERMINISTIC_PROOF|"
+    "VALID_TOTAL_DELTA_12|VALID_FEEDBACK_DELTA_5|VALID_INSIGHT_DELTA_4|"
+    "VALID_ORIGINALITY_DELTA_3|INVALID_TOTAL_DELTA_24|"
+    "INVALID_FEEDBACK_DELTA_10|INVALID_INSIGHT_DELTA_8|INVALID_ORIGINALITY_DELTA_6"
 )
 HARD_GATE_CONSENSUS_CHECKS = (
     "FINALIZED_RECEIPT|EXACT_TRANSACTION_GATE|EXACT_IDENTITY_GATE|"
@@ -55,6 +57,10 @@ PROOF_SCORE_TOLERANCE = 8
 FEEDBACK_SCORE_TOLERANCE = 5
 INSIGHT_SCORE_TOLERANCE = 4
 ORIGINALITY_SCORE_TOLERANCE = 3
+INVALID_TOTAL_SCORE_TOLERANCE = 24
+INVALID_FEEDBACK_SCORE_TOLERANCE = 10
+INVALID_INSIGHT_SCORE_TOLERANCE = 8
+INVALID_ORIGINALITY_SCORE_TOLERANCE = 6
 
 INJECTION_TOKENS = (
     "ignore previous",
@@ -296,14 +302,19 @@ def _feedback_quality(feedback_score: int) -> str:
     return "HIGH"
 
 
+def _anchored_score(raw: typing.Any, maximum: int, step: int) -> int:
+    parsed = _parse_int(raw, 0, maximum)
+    return min(maximum, ((parsed + (step // 2)) // step) * step)
+
+
 def _normalize_review(raw: typing.Any, minimum_score: int, reward_per_approved: int) -> dict:
     if not isinstance(raw, dict):
         raise gl.vm.UserError(f"{ERR_LLM} semantic review was not structured")
 
     proof_score = _parse_int(raw.get("proof_score"), 0, 40)
-    feedback_score = _parse_int(raw.get("feedback_score"), 0, 25)
-    insight_score = _parse_int(raw.get("insight_score"), 0, 20)
-    originality_score = _parse_int(raw.get("originality_score"), 0, 15)
+    feedback_score = _anchored_score(raw.get("feedback_score"), 25, 5)
+    insight_score = _anchored_score(raw.get("insight_score"), 20, 4)
+    originality_score = _anchored_score(raw.get("originality_score"), 15, 3)
     score = proof_score + feedback_score + insight_score + originality_score
     transaction_success = _parse_bool(raw.get("transaction_success"))
     identity_match = _parse_bool(raw.get("identity_match"))
@@ -406,18 +417,29 @@ def _reviews_equivalent(leader: typing.Any, validator: typing.Any, minimum_score
 
         leader_score = int(leader["score"])
         validator_score = int(validator["score"])
-        if (leader_score >= minimum_score) != (validator_score >= minimum_score):
+        if int(leader["proof_score"]) != int(validator["proof_score"]):
             return False
-        if abs(leader_score - validator_score) > TOTAL_SCORE_TOLERANCE:
-            return False
-        if abs(int(leader["proof_score"]) - int(validator["proof_score"])) > PROOF_SCORE_TOLERANCE:
-            return False
-        if abs(int(leader["feedback_score"]) - int(validator["feedback_score"])) > FEEDBACK_SCORE_TOLERANCE:
-            return False
-        if abs(int(leader["insight_score"]) - int(validator["insight_score"])) > INSIGHT_SCORE_TOLERANCE:
-            return False
-        if abs(int(leader["originality_score"]) - int(validator["originality_score"])) > ORIGINALITY_SCORE_TOLERANCE:
-            return False
+        valid_evidence = bool(leader["usage_valid"])
+        if valid_evidence:
+            if (leader_score >= minimum_score) != (validator_score >= minimum_score):
+                return False
+            if abs(leader_score - validator_score) > TOTAL_SCORE_TOLERANCE:
+                return False
+            if abs(int(leader["feedback_score"]) - int(validator["feedback_score"])) > FEEDBACK_SCORE_TOLERANCE:
+                return False
+            if abs(int(leader["insight_score"]) - int(validator["insight_score"])) > INSIGHT_SCORE_TOLERANCE:
+                return False
+            if abs(int(leader["originality_score"]) - int(validator["originality_score"])) > ORIGINALITY_SCORE_TOLERANCE:
+                return False
+        else:
+            if abs(leader_score - validator_score) > INVALID_TOTAL_SCORE_TOLERANCE:
+                return False
+            if abs(int(leader["feedback_score"]) - int(validator["feedback_score"])) > INVALID_FEEDBACK_SCORE_TOLERANCE:
+                return False
+            if abs(int(leader["insight_score"]) - int(validator["insight_score"])) > INVALID_INSIGHT_SCORE_TOLERANCE:
+                return False
+            if abs(int(leader["originality_score"]) - int(validator["originality_score"])) > INVALID_ORIGINALITY_SCORE_TOLERANCE:
+                return False
         return True
     except Exception:
         return False
@@ -439,6 +461,24 @@ def _handle_leader_error(leaders_res: gl.vm.Result, leader_fn: typing.Callable[[
         if validator_message.startswith(ERR_TRANSIENT) and leader_message.startswith(ERR_TRANSIENT):
             return True
         return False
+    except Exception:
+        return False
+
+
+def _handle_semantic_leader_error(leaders_res: gl.vm.Result, app_result_url: str) -> bool:
+    leader_message = str(getattr(leaders_res, "message", ""))
+    if leader_message.startswith(ERR_LLM):
+        return False
+    if not leader_message.startswith((ERR_EXTERNAL, ERR_TRANSIENT)):
+        return False
+    try:
+        _render_text(app_result_url)
+        return False
+    except gl.vm.UserError as exc:
+        validator_message = str(getattr(exc, "message", str(exc)))
+        if validator_message.startswith(ERR_EXTERNAL):
+            return validator_message == leader_message
+        return validator_message.startswith(ERR_TRANSIENT) and leader_message.startswith(ERR_TRANSIENT)
     except Exception:
         return False
 
@@ -487,10 +527,13 @@ def _normalize_hard_gate_feedback(
     sender = str(transaction["sender"])
 
     failed = not transaction_success
-    gate_flag = "TRANSACTION_FAILED" if failed else "IDENTITY_MISMATCH"
-    reason = (
-        "Rejected: finalized receipt execution failed."
-        if failed else "Rejected: receipt sender does not match tester wallet."
+    identity_failed = transaction_success and not identity_match
+    gate_flag = "TRANSACTION_FAILED" if failed else (
+        "IDENTITY_MISMATCH" if identity_failed else "OUTCOME_ORIGIN_MISMATCH"
+    )
+    reason = "Rejected: finalized receipt execution failed." if failed else (
+        "Rejected: receipt sender does not match tester wallet."
+        if identity_failed else "Rejected: outcome URL is outside the campaign product origin."
     )
     transaction_analysis = (
         f"Finalized receipt {tx_hash} failed AGREE/successful execution."
@@ -498,7 +541,10 @@ def _normalize_hard_gate_feedback(
     )
     identity_analysis = (
         f"Receipt sender {sender}; execution gate failed first."
-        if failed else f"Receipt sender {sender} differs from tester {tester_address}."
+        if failed else (
+            f"Receipt sender {sender} differs from tester {tester_address}."
+            if identity_failed else f"Receipt sender {sender} matches tester {tester_address}."
+        )
     )
 
     def detail(key: str, fallback: str) -> str:
@@ -526,20 +572,23 @@ def _normalize_hard_gate_feedback(
         "reward_amount": "0",
         "slash_stake": True,
         "reason_summary": reason,
-        "evidence_summary": f"Validators checked finalized receipt {tx_hash}; feedback cannot override its failed hard gate.",
+        "evidence_summary": f"Validators checked finalized receipt {tx_hash}; feedback cannot override the failed objective evidence gate.",
         "improvement_recommendation": recommendation,
         "risk_flags": risk_flags,
         "rubric_version": RUBRIC_VERSION,
         "validation_method": HARD_GATE_VALIDATION_METHOD,
         "transaction_analysis": transaction_analysis,
         "identity_analysis": identity_analysis,
-        "task_analysis": "Task was not evaluated because a mandatory receipt gate failed.",
-        "proof_reason": "Proof is zero because receipt execution and identity are mandatory.",
+        "task_analysis": (
+            "Task was not evaluated because a mandatory receipt gate failed."
+            if failed or identity_failed else "Task was not evaluated because the outcome URL uses a different origin from the campaign product."
+        ),
+        "proof_reason": "Proof is zero because receipt, identity, and product-origin gates are mandatory.",
         "feedback_reason": feedback_reason,
         "insight_reason": insight_reason,
         "originality_reason": originality_reason,
         "consensus_checks": HARD_GATE_CONSENSUS_CHECKS,
-        "settlement_explanation": "Verified receipt facts reject the proof; stake returns to the campaign pool.",
+        "settlement_explanation": "Verified objective evidence facts reject the proof; stake returns to the campaign pool.",
     }
 
 
@@ -549,15 +598,9 @@ def _score_hard_gate_feedback(
     feedback_text: str,
     transaction: dict,
     tester_address: str,
-    full_report: bool,
 ) -> dict:
-    report_fields = (
-        "Add <=180 character feedback_reason, insight_reason, originality_reason, "
-        "improvement_recommendation and risk_flags."
-        if full_report else "Return only the three scores."
-    )
     prompt = f"""
-Score written product feedback after a receipt hard gate failed. Never approve or claim task completion.
+Score written product feedback after an objective evidence gate failed. Never approve or claim task completion.
 
 TASK: {_clean_text(task_instruction, MAX_PROMPT_TASK_CHARS)}
 REQUIRED PROOF: {_clean_text(proof_requirement, MAX_PROMPT_PROOF_CHARS)}
@@ -565,7 +608,8 @@ TESTER FEEDBACK: {_clean_text(feedback_text, MAX_PROMPT_FEEDBACK_CHARS)}
 
 Choose only these score anchors: feedback_score [0,5,10,15,20,25],
 insight_score [0,4,8,12,16,20], originality_score [0,3,6,9,12,15]. Return JSON.
-{report_fields}
+Also return <=180 character feedback_reason, insight_reason, originality_reason,
+improvement_recommendation and risk_flags. Use the same schema on every node.
 """
     try:
         out = gl.nondet.exec_prompt(prompt, response_format="json")
@@ -587,20 +631,12 @@ def _score_semantic_submission(
     tester_address: str,
     minimum_score: int,
     reward_per_approved: int,
-    full_report: bool,
 ) -> dict:
     app_result_text = _render_text(app_result_url)
 
     transaction_success = _transaction_succeeded(transaction)
     identity_match = str(transaction["sender"]).lower() == tester_address.lower()
     transaction_facts = json.dumps(transaction, sort_keys=True)
-
-    report_fields = (
-        "Add <=180 character evidence_summary, improvement_recommendation, risk_flags, "
-        "transaction_analysis, identity_analysis, task_analysis, proof_reason, feedback_reason, "
-        "insight_reason, originality_reason, reason_summary and settlement_explanation."
-        if full_report else "Return only task_completed and four scores."
-    )
 
     prompt = f"""
 Review this product-testing submission as an independent GenLayer validator.
@@ -614,16 +650,18 @@ OUTCOME PAGE: {app_result_text}
 TESTER FEEDBACK: {_clean_text(feedback_text, MAX_PROMPT_FEEDBACK_CHARS)}
 EXPECTED WALLET: {tester_address}
 
-Rubric, total 100: proof_score 0..40; feedback_score 0..25;
-insight_score 0..20; originality_score 0..15.
+Rubric, total 100. Proof is derived by contract code: 40 when task_completed is true, otherwise 20.
+Choose only these anchors for the subjective components:
+feedback_score [0,5,10,15,20,25], insight_score [0,4,8,12,16,20],
+originality_score [0,3,6,9,12,15].
 
 Fixed hard gates: transaction_success={transaction_success}; identity_match={identity_match}.
 Set task_completed true only when receipt/calldata and the rendered outcome together prove
 the task. A homepage, unrelated page, unreachable page, or feedback claim alone is invalid.
 usage_valid must equal all three hard gates. Good writing cannot replace usage proof.
-The final score is the sum of proof_score, feedback_score, insight_score, and originality_score.
-Return JSON with task_completed, proof_score, feedback_score, insight_score, and originality_score.
-{report_fields}
+Return the same compact JSON schema on every node: task_completed, feedback_score,
+insight_score, originality_score, task_reason, feedback_reason, insight_reason,
+originality_reason, improvement_recommendation and risk_flags. Keep each text field to one short sentence.
 """
     try:
         out = gl.nondet.exec_prompt(prompt, response_format="json")
@@ -642,14 +680,42 @@ Return JSON with task_completed, proof_score, feedback_score, insight_score, and
         feedback_text,
         tester_address,
     )
+    data["proof_score"] = 40 if data["task_completed"] else 20
     data["usage_valid"] = transaction_success and identity_match and data["task_completed"]
-    component_score = (
-        _parse_int(data.get("proof_score"), 0, 40)
-        + _parse_int(data.get("feedback_score"), 0, 25)
-        + _parse_int(data.get("insight_score"), 0, 20)
-        + _parse_int(data.get("originality_score"), 0, 15)
-    )
+    feedback_score = _anchored_score(data.get("feedback_score"), 25, 5)
+    insight_score = _anchored_score(data.get("insight_score"), 20, 4)
+    originality_score = _anchored_score(data.get("originality_score"), 15, 3)
+    component_score = int(data["proof_score"]) + feedback_score + insight_score + originality_score
+    data["feedback_score"] = feedback_score
+    data["insight_score"] = insight_score
+    data["originality_score"] = originality_score
     data["approved"] = bool(data["usage_valid"]) and component_score >= minimum_score
+    tx_hash = str(transaction["transaction_hash"])
+    method_text = str(transaction["calldata_text"])
+    task_reason = _clean_text(data.get("task_reason", "Outcome evidence was checked against the campaign task."), MAX_REVIEW_DETAIL_CHARS)
+    data["transaction_analysis"] = f"Finalized receipt {tx_hash} reached AGREE and executed successfully; calldata includes {_clean_text(method_text, 90)}."
+    data["identity_analysis"] = f"Receipt sender {transaction['sender']} matches tester {tester_address}."
+    data["task_analysis"] = task_reason
+    data["proof_reason"] = (
+        "Full proof credit: finalized receipt, tester identity, and rendered task outcome were verified."
+        if data["task_completed"] else
+        "Partial proof credit: receipt and identity passed, but the rendered outcome did not prove task completion."
+    )
+    data["evidence_summary"] = (
+        "Receipt, tester identity, and same-origin outcome evidence were independently checked."
+    )
+    data["reason_summary"] = (
+        "Approved: all evidence gates passed and the anchored rubric score met the campaign threshold."
+        if data["approved"] else (
+            "Rejected: the rendered outcome did not prove the campaign task."
+            if not data["task_completed"] else
+            "Rejected: evidence gates passed but the anchored rubric score was below the campaign threshold."
+        )
+    )
+    data["settlement_explanation"] = (
+        "Approved evidence reserves the campaign reward; the tester may claim stake plus reward."
+        if data["approved"] else "Rejected evidence returns the tester stake to the campaign pool."
+    )
     return _normalize_review(data, minimum_score, reward_per_approved)
 
 
@@ -918,11 +984,12 @@ class VerdictProof(gl.Contract):
 
         transaction_success = _transaction_succeeded(transaction)
         identity_match = str(transaction["sender"]).lower() == tester_address.lower()
+        outcome_origin_match = _url_host(product_url) == _url_host(app_result_url)
 
-        if not transaction_success or not identity_match:
+        if not transaction_success or not identity_match or not outcome_origin_match:
             def hard_gate_leader_fn() -> dict:
                 return _score_hard_gate_feedback(
-                    task_instruction, proof_requirement, feedback_text, transaction, tester_address, True,
+                    task_instruction, proof_requirement, feedback_text, transaction, tester_address,
                 )
 
             def hard_gate_validator_fn(leaders_res: gl.vm.Result) -> bool:
@@ -930,12 +997,12 @@ class VerdictProof(gl.Contract):
                     return _handle_leader_error(
                         leaders_res,
                         lambda: _score_hard_gate_feedback(
-                            task_instruction, proof_requirement, feedback_text, transaction, tester_address, False,
+                            task_instruction, proof_requirement, feedback_text, transaction, tester_address,
                         ),
                     )
                 try:
                     validator_result = _score_hard_gate_feedback(
-                        task_instruction, proof_requirement, feedback_text, transaction, tester_address, False,
+                        task_instruction, proof_requirement, feedback_text, transaction, tester_address,
                     )
                 except Exception:
                     return False
@@ -946,22 +1013,16 @@ class VerdictProof(gl.Contract):
             def semantic_leader_fn() -> dict:
                 return _score_semantic_submission(
                     product_url, task_instruction, proof_requirement, transaction, app_result_url,
-                    feedback_text, tester_address, minimum_score, reward_per_approved, True,
+                    feedback_text, tester_address, minimum_score, reward_per_approved,
                 )
 
             def semantic_validator_fn(leaders_res: gl.vm.Result) -> bool:
                 if not isinstance(leaders_res, gl.vm.Return):
-                    return _handle_leader_error(
-                        leaders_res,
-                        lambda: _score_semantic_submission(
-                            product_url, task_instruction, proof_requirement, transaction, app_result_url,
-                            feedback_text, tester_address, minimum_score, reward_per_approved, False,
-                        ),
-                    )
+                    return _handle_semantic_leader_error(leaders_res, app_result_url)
                 try:
                     validator_result = _score_semantic_submission(
                         product_url, task_instruction, proof_requirement, transaction, app_result_url,
-                        feedback_text, tester_address, minimum_score, reward_per_approved, False,
+                        feedback_text, tester_address, minimum_score, reward_per_approved,
                     )
                 except Exception:
                     return False

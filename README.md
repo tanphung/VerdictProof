@@ -10,18 +10,19 @@ slash outcome.
 
 ## Deployment Status
 
-- Production app (kept on the prior verified contract until the V2.1 run completes):
+- Production app (promoted only after the complete V2.3 verification run):
   https://verdictproof.vercel.app/
-- Bradbury V2.1 contract: `0xDe0bf3732FaB463f5DA46D09c303a3D3d4390DA0`
-- Contract explorer: https://explorer-bradbury.genlayer.com/address/0xDe0bf3732FaB463f5DA46D09c303a3D3d4390DA0
-- Deployment transaction: https://explorer-bradbury.genlayer.com/tx/0xbea5dbc078c0cc84ed8696f3254ebfb8c75e6cbecd3be5c21f69d55a0d4dcd41
-- V2.1 deployment consensus: `FINALIZED / AGREE / FINISHED_WITH_RETURN`, 5/5
+- Bradbury V2.3 contract: `0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed`
+- Contract explorer: https://explorer-bradbury.genlayer.com/address/0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed
+- Deployment transaction: https://explorer-bradbury.genlayer.com/tx/0x7cb311efeef196d8fcdfae904e43cc21ab1767517453135aa11fc3b3c0a24e6a
+- V2.3 deployment consensus: `FINALIZED / AGREE / FINISHED_WITH_RETURN`, 5/5
   recorded validator votes.
 
-The V2.1 source in the deployment transaction exactly matches the local contract
-(SHA-256 `3f18b1efc1cac4f5e428958d96922aecdea78e6f73d8bbefb65cf9fb351af22a`).
-The final production switch is intentionally gated on the fresh multi-wallet
-verification run.
+The V2.3 source and generated schema in the deployment exactly match the local
+contract (source SHA-256
+`5c5624351a4de6f1e79c58ce7595b7837053b03128637e7cfbf7e95776da4d33`).
+Production promotion remains gated on the complete multi-wallet artifact rather
+than deployment success alone.
 
 ```text
 Project funds campaign
@@ -70,19 +71,25 @@ contract derives transaction success from `status`, consensus `result`, and
 wallet. These evidence gates are not delegated to the LLM.
 
 The leader and each validator independently re-fetch the same evidence and run
-the same versioned four-part LLM rubric. A validator requires exact agreement
-on receipt success, wallet identity, task completion, usage validity, and the
-approval decision. Both scores must stay on the same side of the campaign
-threshold, with bounded tolerances of 12 total points and 8/5/4/3 points for
-proof, feedback, insight, and originality. Malformed LLM output is a validator
-disagreement rather than a synthetic rejection. The consensus-approved leader
-narrative becomes the final report; VerdictProof does not invent a separate
-transcript for each validator.
+the same compact, versioned rubric. A validator requires exact agreement on
+receipt success, wallet identity, task completion, usage validity, approval,
+and the deterministic proof score (40 for completed task evidence, 20 for a
+valid receipt/identity pair whose outcome does not prove the task). Subjective
+scores use fixed anchors. Valid evidence retains strict threshold-side and
+12/5/4/3 total/feedback/insight/originality tolerances; invalid evidence has no
+threshold-side ambiguity and uses bounded 24/10/8/6 tolerances. Malformed LLM
+output forces disagreement and rotation instead of becoming a synthetic
+rejection. The consensus-approved leader narrative becomes the final report;
+VerdictProof does not invent a separate transcript for each validator.
 
-Bradbury writes request three initial validators and allow the network's three
-consensus rotations. This preserves independent multi-validator judgment while
-avoiding a single unavailable validator keeping a product review pending for an
-entire transaction validity window.
+Execution or identity failures, and outcome URLs outside the campaign product
+origin, take the hard-gate path without rendering the outcome. Validators still
+independently score feedback, insight, and originality with the same compact
+schema, but task completion remains false and proof remains zero.
+
+Bradbury writes request five initial validators and allow the network's three
+consensus rotations. The UI reports the actual vote values returned by RPC; it
+does not turn validator timeouts into fabricated `AGREE` votes.
 
 Campaign funding and tester stake are also enforced against the exact
 `gl.message.value` received by each payable method. Declared pool or stake
@@ -150,25 +157,27 @@ Minimum score: 75
 
 ## Verified Bradbury Run
 
-The currently committed public report at
+The public report at
 [`deploy/latest-bradbury-verification.json`](deploy/latest-bradbury-verification.json)
-records the last complete V1 live run against
-`0x52fe4d8dA220A8b7DC63Ed2fDE9532642AAb4c7e`:
+is replaced only after the complete V2.3 live run against
+`0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed` succeeds. It records:
 
 - two sponsor-funded campaigns;
-- a wallet-owned proof approved at 90/100, with `HIGH` feedback quality and a
-  real 0.04 GEN reward claimed alongside the returned 0.02 GEN stake;
-- an ownership-mismatched proof rejected at 10/100 because its receipt sender
-  did not match the tester wallet; its 0.02 GEN stake was slashed into the pool;
-- seven Bradbury explorer links covering creation, proof submission, AI review,
-  and claim transactions.
+- a wallet-owned proof approved with all three evidence gates and a real 0.04
+  GEN reward claimed alongside the returned 0.02 GEN stake;
+- an ownership-mismatched proof rejected before outcome rendering;
+- a wallet-owned, same-origin but semantically insufficient outcome rejected by
+  comparative validation;
+- the exact source/schema match, review vote and execution metadata, reward
+  claim, and campaign close/refund transactions.
 
 The report contains public wallet addresses, verdict fields, summaries, rubric
 scores, recommendations, and explorer links only. It contains no private keys.
 
-The V2.1 runner is checkpointed at
+The V2.3 runner is checkpointed at
 `deploy/.bradbury-verification-state.json` and will replace the public artifact
-only after Bradbury exposes the finalized V2 contract through its read RPC.
+only after Bradbury exposes every required workflow result through finalized
+state reads.
 This prevents the repository from presenting a partial run as verified.
 
 Good feedback example:
@@ -280,7 +289,7 @@ npm run build
 Copy `frontend/.env.example` to `frontend/.env` after deployment:
 
 ```bash
-VITE_VERDICTPROOF_CONTRACT_ADDRESS=0xDe0bf3732FaB463f5DA46D09c303a3D3d4390DA0
+VITE_VERDICTPROOF_CONTRACT_ADDRESS=0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed
 VITE_VERDICTPROOF_CHAIN=bradbury
 VITE_GENLAYER_EXPLORER=https://explorer-bradbury.genlayer.com
 ```
@@ -295,7 +304,7 @@ not create local campaigns or fake submissions.
 
 ## Scope Notes
 
-VerdictProof V2.1 intentionally focuses on one serious GenLayer workflow:
+VerdictProof V2.3 intentionally focuses on one serious GenLayer workflow:
 campaign funding, tester stake, evidence submission, Intelligent Contract
 review, and reward/slash settlement. It is not a collection of many small demos
 or lightly renamed examples.
