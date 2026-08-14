@@ -147,7 +147,7 @@ The artifact contains public addresses, transaction hashes, verdict fields, and 
 | Production build | Pass |
 | Desktop and mobile smoke tests | Pass |
 
-GitHub Actions runs release-artifact integrity checks, GenVM lint, direct contract tests, the frontend audit, TypeScript checks, tests, and production build on every pull request and push to `main`. StudioNet consensus testing is available as the manual **StudioNet Integration** workflow. Bradbury multi-wallet writes remain an explicit release procedure so CI never holds wallet secrets or creates unintended transactions.
+GitHub Actions runs release-artifact integrity checks, GenVM lint, direct contract tests, the frontend audit, TypeScript checks, tests, and production build on every pull request and push to `main`. StudioNet consensus testing is available as the manual **StudioNet Integration** workflow after configuring the `STUDIONET_ACCOUNT_PRIVATE_KEY` and `STUDIONET_APPROVED_TESTER_PRIVATE_KEY` repository secrets. Bradbury multi-wallet writes remain an explicit release procedure so CI never holds Bradbury wallet secrets or creates unintended transactions.
 
 The pinned GenVM runner is intentionally retained because it matches the deployed and verified contract source. A newer runner notification alone is not treated as a reason to change the release.
 

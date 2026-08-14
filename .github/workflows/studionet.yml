@@ -15,9 +15,12 @@ jobs:
     name: Consensus integration tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      ACCOUNT_PRIVATE_KEY: ${{ secrets.STUDIONET_ACCOUNT_PRIVATE_KEY }}
+      VERDICTPROOF_APPROVED_TESTER_PRIVATE_KEY: ${{ secrets.STUDIONET_APPROVED_TESTER_PRIVATE_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
