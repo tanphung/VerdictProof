@@ -468,8 +468,14 @@ async function reviewSubmission(client, contractAddress, account, state, submiss
   return { submission, receipt };
 }
 
-async function closeCampaign(client, contractAddress, account, state, campaignId, label, txKey) {
+async function closeCampaign(client, contractAddress, account, state, campaignId, label, txKey, expectedRefundAtto = null) {
   const before = await read(client, contractAddress, "get_campaign", [campaignId]);
+  const refundBeforeClose = before.status === "OPEN"
+    ? BigInt(before.reward_pool)
+    : expectedRefundAtto;
+  if (refundBeforeClose === null) {
+    throw new Error(`Cannot reconstruct the pre-close refund for ${label}`);
+  }
   const hash = await checkpointedWrite(state, txKey, `close ${label}`, {
     account,
     address: contractAddress,
@@ -483,7 +489,7 @@ async function closeCampaign(client, contractAddress, account, state, campaignId
     const item = await read(client, contractAddress, "get_campaign", [campaignId]);
     return item.status === "CLOSED" && BigInt(item.reward_pool) === 0n ? item : null;
   });
-  return { before, campaign, receipt };
+  return { before, campaign, receipt, refundedAtto: refundBeforeClose.toString() };
 }
 
 function assertV3Report(submission, label, expectedValidationMethod) {
@@ -651,7 +657,7 @@ async function main() {
     "wallet-owned evidence",
     "reviewApprovedEvidence"
   );
-  if (approvedReview.submission.status !== "APPROVED") {
+  if (!["APPROVED", "CLAIMED"].includes(approvedReview.submission.status)) {
     throw new Error(`Expected approved evidence, received ${approvedReview.submission.status}: ${approvedReview.submission.reason_summary}`);
   }
   if (!approvedReview.submission.transaction_success || !approvedReview.submission.identity_match || !approvedReview.submission.task_completed) {
@@ -723,9 +729,10 @@ async function main() {
     state,
     evidenceCampaignId,
     "unused evidence campaign",
-    "closeEvidenceCampaign"
+    "closeEvidenceCampaign",
+    gen(0.1)
   );
-  if (BigInt(closedEvidenceCampaign.before.reward_pool) !== gen(0.1)) {
+  if (BigInt(closedEvidenceCampaign.refundedAtto) !== gen(0.1)) {
     throw new Error("Close/refund verification did not start from the expected 0.10 GEN pool");
   }
 
@@ -789,7 +796,7 @@ async function main() {
       campaignId: closedEvidenceCampaign.campaign.campaign_id,
       title: closedEvidenceCampaign.campaign.title,
       status: closedEvidenceCampaign.campaign.status,
-      refundedAtto: closedEvidenceCampaign.before.reward_pool,
+      refundedAtto: closedEvidenceCampaign.refundedAtto,
       rewardPoolAtto: closedEvidenceCampaign.campaign.reward_pool
     },
     duplicateCampaignCleanup: closedDuplicateCampaign ? {
@@ -831,7 +838,7 @@ async function main() {
       semanticRejected: semanticReview.submission
     }
   };
-  assertPublicArtifactHasNoSecrets(report, env);
+  assertPublicArtifactHasNoSecrets(report, rootEnv);
   writeFileSync(resolve(ROOT, "deploy", "latest-bradbury-verification.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
   state.completedAt = report.generatedAt;
   saveVerificationState(state);

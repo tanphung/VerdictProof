@@ -1,68 +1,81 @@
-# VerdictProof Completion Handoff
+# VerdictProof V2.3 Completion Handoff
 
-Updated: 2026-07-23 (Asia/Bangkok)
+Updated: 2026-08-14 (Asia/Bangkok)
 
-## Final State
+## Current release
 
-- Workspace boundary: modify only `D:\app genlayer\VerdictProof`.
-- Repository: `https://github.com/tanphung/VerdictProof.git`
-- Production app: `https://verdictproof.vercel.app/`
-- Bradbury contract: `0x52fe4d8dA220A8b7DC63Ed2fDE9532642AAb4c7e`
-- Deploy transaction: `0x5f19a0e37724476dad1478ca346613d1c696ee76d16497a51ba389e02ab72b50`
-- Never commit `.env`, `frontend/.env`, private keys, keystore passwords, or
-  `deploy/.bradbury-verification-state.json`.
+- Workspace: `D:\app genlayer\VerdictProof`
+- Repository: https://github.com/tanphung/VerdictProof
+- Production: https://verdictproof.vercel.app/
+- Bradbury contract: `0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed`
+- Deployment tx: `0x7cb311efeef196d8fcdfae904e43cc21ab1767517453135aa11fc3b3c0a24e6a`
+- Rubric: `VERDICTPROOF_V2_3`
+- Source SHA-256: `5c5624351a4de6f1e79c58ce7595b7837053b03128637e7cfbf7e95776da4d33`
+- Exact local/deployed source and schema match: yes
+- Public artifact: `deploy/latest-bradbury-verification.json`
 
-## Live Verification
+Never commit `.env`, `frontend/.env`, private keys, keystore passwords, or
+`deploy/.bradbury-verification-state.json`.
 
-`npm run verify:bradbury` completed against the final contract on 2026-07-23.
-Every transaction reached consensus `AGREE` and execution
-`FINISHED_WITH_RETURN`.
+## Final Bradbury workflow
 
-1. Create `First-Time Sponsor Campaign Launch Study`:
-   `0x59228c12bdfd6ca03e7ab21c1f8c2bbd24087b332c7e7537d143117da1e10188`
-2. Create `Verdict and Transaction Clarity Study`:
-   `0x9042747e2eee2f5bbd1ce84d4e8f13a01a6b39aca0d91d4626f4458983a1e1e5`
-3. Submit valid wallet-owned proof:
-   `0x0c8c7fab8c9841f84b683ef2b469100eed57c5f700002119d199025ee601061e`
-4. Submit identity-mismatched proof:
-   `0xd13f77e3d6cd68022b3859d610ba40f93294e82b3ebb067b4335c8339281b197`
-5. Review valid proof:
-   `0x3aded86a3bb285d4b94fd2ae38ccc7f51e82d58b2661e66fe9a7b198a23f2e81`
-6. Review mismatched proof:
-   `0x41b54f24f66bd1fb2348abcebf31395882c2a247ffdcf7b012c6c8299aba713b`
-7. Claim returned stake plus reward:
-   `0xa7aaef4b6e4b2f1dde2f46618e6bf97ec9260154d0f4a2c8c31cd3ac97f6dd5a`
+All listed transactions are `FINALIZED / AGREE / FINISHED_WITH_RETURN`.
 
-Outcome summary:
+1. Create primary campaign:
+   `0xaa2d8caa5a0297bc76531fda7547aaf33379c73572135608be4624035fcfe483`
+2. Create evidence campaign:
+   `0x6b342ffe43704b1790d09afd92701363f9107f0f82797a153ad7f92382674f3a`
+3. Submit approved evidence:
+   `0xcd649f4254ff0e87a1540b7249f19f24d57e9b1196fd11e588568024c4db233a`
+4. Submit identity-mismatch evidence:
+   `0xf50ef627f5ee8241ce2ca844ea83787dda7e8436a4e14ec955c0565f0a784a6d`
+5. Submit semantic-mismatch evidence:
+   `0xca4d10514336f1b9e91cf458ce5365507272fccffcece4d94dccfbdc020c5b87`
+6. Review approved evidence (3/5 AGREE; two validator timeouts):
+   `0xf125d46d87fe9679e7aebaf0bcac4162041752c2b767b760a087cde11d9995ec`
+7. Review identity mismatch (3/5 AGREE; two deterministic violations):
+   `0x401c6346722d4198960a1972349a84cc050b2e570b1586bd7d1b589f0a3e156d`
+8. Review semantic mismatch (3/5 AGREE; two validator timeouts):
+   `0xfa1d8b041c9eb8aa49cec1b10ffa5df1ae1626d7a9ec5e125add3c9b49e7a9c9`
+9. Claim approved stake plus reward (5/5 AGREE):
+   `0x9cf43f165be99e64061910b1e60456a77d82da4517a6373614b4bf558027d57f`
+10. Close evidence campaign and refund 0.10 GEN (5/5 AGREE):
+    `0x5d0bbb00018727a2308898c7421ac6014150d0171e67736491012b197b813829`
 
-- Valid proof: `APPROVED`, score `90/100`, `HIGH` feedback quality, 0.02 GEN
-  stake returned and 0.04 GEN reward claimed.
-- Mismatched proof: `REJECTED`, score `10/100`, sender identity mismatch
-  independently confirmed from the official Bradbury receipt, and 0.02 GEN
-  stake slashed to the campaign pool.
+Finalized outcomes:
 
-The complete public record is in `deploy/latest-bradbury-verification.json`.
+- Submission #1: `CLAIMED`, 88/100, receipt + identity + task passed,
+  0.02 GEN stake and 0.04 GEN reward claimed.
+- Submission #2: `REJECTED`, 45/100, receipt passed but wallet identity failed;
+  hard-gate feedback path, 0.02 GEN stake returned to campaign pool.
+- Submission #3: `REJECTED`, 44/100, receipt and wallet identity passed but
+  rendered outcome did not prove the task; comparative semantic path.
+- Campaign #2: `CLOSED`, 0.10 GEN refunded, remaining pool 0.
 
-## Contract Consensus Design
+The UI must report the actual 3/5 review vote metadata. Do not present validator
+timeouts or deterministic violations as `AGREE` votes.
 
-`evaluate_submission` uses an LLM for a detailed, four-part rubric and a
-specific recommendation. The validator independently fetches the official
-Bradbury receipt and renders the public result URL. It verifies receipt success,
-sender identity, result-domain ownership, a contract method call, feedback
-specificity, settlement status, and reward accounting before accepting the
-leader result. This is source-grounded evidence verification, not a JSON-format
-check.
+## Verification commands
 
-## Final Verification Checklist
+```bash
+genvm-lint check contracts/verdict_proof.py --json
+pytest tests/direct/ -v
+gltest tests/integration/ -v -s --network studionet
+cd frontend
+npm test -- --run
+npm audit --omit=dev
+npm run build
+npm run verify:bradbury
+```
 
-Before a future code change or submission, rerun:
+The verification runner is restart-safe. Existing finalized submissions may be
+`CLAIMED`, and an already-closed campaign reconstructs its expected refund from
+the immutable campaign creation input while still requiring the exact finalized
+close transaction and `CLOSED / reward_pool=0` state.
 
-1. `genvm-lint check contracts/verdict_proof.py --json`
-2. `pytest tests/direct/ -v`
-3. `gltest tests/integration/ -v -s --network studionet`
-4. `cd frontend && npm test -- --run`
-5. `cd frontend && npm run build`
-6. `cd frontend && npm audit --omit=dev`
-7. Verify the production bundle embeds only the final contract address.
+## Submission positioning
 
-Do not use `genlayernode` unless validator-node setup is explicitly requested.
+Describe VerdictProof as a controlled public pilot with real on-chain
+workflows. Do not claim external users, customers, or adoption without evidence.
+The complete Project submission copy and 90-second demo sequence are in
+`SUBMISSION.md`.

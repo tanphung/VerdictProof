@@ -1499,7 +1499,7 @@ function ReviewHistory({
 
                   <div className="rubric-grid detailed-rubric" aria-label="GenLayer review score breakdown">
                     <RubricScore label="Proof" value={submission.proofScore} maximum={40} reason={submission.proofReason} />
-                    <RubricScore label="Specificity" value={submission.feedbackScore} maximum={25} reason={submission.feedbackReason} />
+                    <RubricScore label="Feedback" value={submission.feedbackScore} maximum={25} reason={submission.feedbackReason} />
                     <RubricScore label="Insight" value={submission.insightScore} maximum={20} reason={submission.insightReason} />
                     <RubricScore label="Originality" value={submission.originalityScore} maximum={15} reason={submission.originalityReason} />
                   </div>

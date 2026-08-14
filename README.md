@@ -10,7 +10,7 @@ slash outcome.
 
 ## Deployment Status
 
-- Production app (promoted only after the complete V2.3 verification run):
+- Production app (V2.3 runtime promoted after the complete verification run):
   https://verdictproof.vercel.app/
 - Bradbury V2.3 contract: `0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed`
 - Contract explorer: https://explorer-bradbury.genlayer.com/address/0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed
@@ -21,8 +21,8 @@ slash outcome.
 The V2.3 source and generated schema in the deployment exactly match the local
 contract (source SHA-256
 `5c5624351a4de6f1e79c58ce7595b7837053b03128637e7cfbf7e95776da4d33`).
-Production promotion remains gated on the complete multi-wallet artifact rather
-than deployment success alone.
+The production release is promoted from this exact verified source and schema;
+deployment success alone is never treated as a complete product verification.
 
 ```text
 Project funds campaign
@@ -159,8 +159,8 @@ Minimum score: 75
 
 The public report at
 [`deploy/latest-bradbury-verification.json`](deploy/latest-bradbury-verification.json)
-is replaced only after the complete V2.3 live run against
-`0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed` succeeds. It records:
+records the complete V2.3 live run against
+`0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed`. It includes:
 
 - two sponsor-funded campaigns;
 - a wallet-owned proof approved with all three evidence gates and a real 0.04
