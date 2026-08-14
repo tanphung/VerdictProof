@@ -21,7 +21,6 @@ export const EXPLORER =
   runtimeConfig?.explorer || import.meta.env.VITE_GENLAYER_EXPLORER || "https://explorer-bradbury.genlayer.com";
 export const CHAIN = testnetBradbury;
 export const RUBRIC_VERSION = runtimeConfig?.rubricVersion || "VERDICTPROOF_V2_3";
-export const INITIAL_VALIDATORS = 5n;
 export const REVIEW_TRANSACTIONS = runtimeConfig?.reviewTransactions ?? {};
 
 export type Eip1193Provider = {
@@ -32,7 +31,6 @@ export type Eip1193Provider = {
 
 let readClientCache: ReturnType<typeof createClient> | null = null;
 let readQueue = Promise.resolve();
-let bradburyNetworkSynced = false;
 
 export type TxStage = "pending" | "accepted" | "finalized" | "failed";
 
@@ -113,7 +111,6 @@ export async function ensureBradburyNetwork(provider: Eip1193Provider) {
   const chainIdHex = `0x${CHAIN.id.toString(16)}`;
   const currentChainId = await provider.request({ method: "eth_chainId" });
   if (typeof currentChainId === "string" && currentChainId.toLowerCase() === chainIdHex) {
-    bradburyNetworkSynced = true;
     return;
   }
 
@@ -122,11 +119,9 @@ export async function ensureBradburyNetwork(provider: Eip1193Provider) {
       method: "wallet_switchEthereumChain",
       params: [{ chainId: chainIdHex }]
     });
-    bradburyNetworkSynced = true;
   } catch (error) {
     if (typeof error === "object" && error && "code" in error && Number(error.code) === 4902) {
       await addOrUpdateBradburyNetwork(provider);
-      bradburyNetworkSynced = true;
       await provider.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: chainIdHex }]
@@ -174,7 +169,7 @@ export async function writeContract(
   } as never);
 }
 
-export async function waitAccepted(client: ReturnType<typeof createClient>, hash: string, maxAttempts = 80) {
+export async function waitAccepted(hash: string, maxAttempts = 80) {
   let lastStatus: TxStatus | null = null;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const status = await getTransactionStatus(hash);

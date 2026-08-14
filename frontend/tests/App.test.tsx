@@ -158,7 +158,6 @@ function reviewedSubmission() {
     identity_match: true,
     task_completed: true,
     usage_valid: true,
-    feedback_quality: "HIGH",
     proof_score: 36,
     feedback_score: 22,
     insight_score: 17,

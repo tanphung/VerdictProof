@@ -257,7 +257,7 @@ describe("genlayer frontend helpers", () => {
   });
 
   it("treats accepted execution errors as failed transactions", async () => {
-    const { getTransactionStatus, readClient, waitAccepted } = await import("../src/lib/genlayer");
+    const { getTransactionStatus, waitAccepted } = await import("../src/lib/genlayer");
     getTransaction.mockResolvedValue({
       status_name: "ACCEPTED",
       result_name: "AGREE",
@@ -265,7 +265,7 @@ describe("genlayer frontend helpers", () => {
     });
     waitForTransactionReceipt.mockResolvedValueOnce({});
 
-    await expect(waitAccepted(readClient(), "0xhash")).rejects.toThrow("execution failed");
+    await expect(waitAccepted("0xhash")).rejects.toThrow("execution failed");
 
     const status = await getTransactionStatus("0xhash");
     expect(status.stage).toBe("failed");
@@ -339,14 +339,14 @@ describe("genlayer frontend helpers", () => {
   });
 
   it("distinguishes an unfinished poll window from transaction failure", async () => {
-    const { readClient, waitAccepted } = await import("../src/lib/genlayer");
+    const { waitAccepted } = await import("../src/lib/genlayer");
     getTransaction.mockResolvedValueOnce({
       status_name: "COMMITTING",
       result_name: "IDLE",
       txExecutionResultName: "NOT_VOTED"
     });
 
-    await expect(waitAccepted(readClient(), "0xhash", 1)).rejects.toMatchObject({
+    await expect(waitAccepted("0xhash", 1)).rejects.toMatchObject({
       name: "TransactionPendingError"
     });
   });

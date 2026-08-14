@@ -35,7 +35,6 @@ export type Submission = {
   identityMatch: boolean;
   taskCompleted: boolean;
   usageValid: boolean;
-  feedbackQuality: string;
   proofScore: number;
   feedbackScore: number;
   insightScore: number;

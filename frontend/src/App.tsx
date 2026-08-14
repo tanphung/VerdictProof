@@ -104,7 +104,6 @@ type ChainSubmission = {
   identity_match?: boolean;
   task_completed?: boolean;
   usage_valid?: boolean;
-  feedback_quality?: string;
   proof_score?: number | string | bigint;
   feedback_score?: number | string | bigint;
   insight_score?: number | string | bigint;
@@ -213,7 +212,6 @@ function normalizeSubmission(item: ChainSubmission, campaignTitle = "Live campai
     identityMatch: Boolean(item.identity_match),
     taskCompleted: Boolean(item.task_completed),
     usageValid: Boolean(item.usage_valid),
-    feedbackQuality: item.feedback_quality ?? "",
     proofScore: toNumber(item.proof_score ?? 0),
     feedbackScore: toNumber(item.feedback_score ?? 0),
     insightScore: toNumber(item.insight_score ?? 0),
@@ -440,7 +438,6 @@ function loadStoredLiveState(): LiveState {
         identityMatch: Boolean(submission.identityMatch),
         taskCompleted: Boolean(submission.taskCompleted),
         usageValid: Boolean(submission.usageValid),
-        feedbackQuality: submission.feedbackQuality ?? "",
         proofScore: Number(submission.proofScore || 0),
         feedbackScore: Number(submission.feedbackScore || 0),
         insightScore: Number(submission.insightScore || 0),
@@ -854,7 +851,7 @@ function App() {
       hash = String(await write(client));
       trackSubmittedTx(hash, label, metadata);
       setNotice(`${label} submitted. Use the transaction link in this flow to verify it.`);
-      await waitAccepted(client, hash);
+      await waitAccepted(hash);
       await waitForLiveState(isSynced, successMessage(hash));
     } catch (error) {
       if (hash && isTransactionPendingError(error)) {
