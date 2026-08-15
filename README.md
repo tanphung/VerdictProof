@@ -13,6 +13,7 @@ VerdictProof is a controlled public pilot with real on-chain workflows. The veri
 | Surface | Verified release |
 | --- | --- |
 | Live dApp | [verdictproof.vercel.app](https://verdictproof.vercel.app) |
+| Video demo on X | [VerdictProof full workflow demo](https://x.com/tanphung000/status/2088504223906635982) |
 | Source repository | [github.com/tanphung/VerdictProof](https://github.com/tanphung/VerdictProof) |
 | Bradbury contract | [`0xF979...aBed`](https://explorer-bradbury.genlayer.com/address/0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed) |
 | Deployment transaction | [`0x7cb3...4e6a`](https://explorer-bradbury.genlayer.com/tx/0x7cb311efeef196d8fcdfae904e43cc21ab1767517453135aa11fc3b3c0a24e6a) |
