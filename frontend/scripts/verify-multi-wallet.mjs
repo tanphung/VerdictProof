@@ -12,8 +12,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXPLORER = "https://explorer-bradbury.genlayer.com";
 const APP_URL = "https://verdictproof.vercel.app/";
 const INITIAL_VALIDATORS = 5n;
-const DEPLOYMENT_TX = "0x7cb311efeef196d8fcdfae904e43cc21ab1767517453135aa11fc3b3c0a24e6a";
-const DEPLOYED_SOURCE_SHA256 = "5c5624351a4de6f1e79c58ce7595b7837053b03128637e7cfbf7e95776da4d33";
+const DEPLOYMENT_TX = "0xf5b803071640c459d8dddf79d6380156d4b260f17cc12409516bb29a7f9ff60a";
+const DEPLOYED_SOURCE_SHA256 = "6b46869739c1cf3406b1f6a0e91576086c1b9814d2874c0b64a662bf66c8664d";
 const VERIFICATION_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-verification-state.json");
 const publicClient = createPublicClient({
   chain: testnetBradbury,
@@ -287,6 +287,72 @@ async function waitExecuted(client, hash, label) {
   throw new Error(`${label} did not reach an accepted successful lifecycle state: ${previousState || "UNKNOWN"}`);
 }
 
+async function waitExpectedContractRejection(client, hash, contractAddress, label, requireFinalized = false) {
+  console.log(`${label}: submitted (contract rejection expected)`);
+  console.log(`  ${txUrl(hash)}`);
+  let previousState = "";
+  let consecutiveReadFailures = 0;
+  for (let attempt = 0; attempt < 1800; attempt += 1) {
+    let tx;
+    try {
+      tx = await client.getTransaction({ hash });
+      consecutiveReadFailures = 0;
+    } catch (error) {
+      consecutiveReadFailures += 1;
+      if (consecutiveReadFailures >= 20) {
+        throw new Error(`${label} could not be read after ${consecutiveReadFailures} consecutive RPC failures`);
+      }
+      await sleep(5000);
+      continue;
+    }
+    const statusName = String(tx.status_name ?? tx.statusName ?? tx.status ?? "").toUpperCase();
+    const resultName = String(tx.result_name ?? tx.resultName ?? "").toUpperCase();
+    const executionResultName = String(tx.txExecutionResultName ?? "").toUpperCase();
+    const decodedCallData = tx.txDataDecoded?.callData;
+    const functionName = String(
+      decodedCallData instanceof Map
+        ? decodedCallData.get("method") ?? ""
+        : decodedCallData && typeof decodedCallData === "object"
+          ? decodedCallData.method ?? ""
+          : ""
+    );
+    const recipient = String(tx.recipient ?? "");
+    const stateName = `${statusName || "UNKNOWN"} / ${executionResultName || resultName || "UNKNOWN"}`;
+    if (stateName !== previousState) {
+      console.log(`  lifecycle: ${stateName}`);
+      previousState = stateName;
+    }
+    if (/UNDETERMINED|CANCELED/.test(statusName) || (/ACCEPTED|FINALIZED/.test(statusName) && resultName !== "AGREE")) {
+      throw new Error(`${label} failed at consensus instead of being deterministically rejected by the contract: ${stateName}`);
+    }
+    const terminalEnough = requireFinalized ? statusName === "FINALIZED" : /ACCEPTED|FINALIZED/.test(statusName);
+    if (terminalEnough && resultName === "AGREE" && /ERROR|REVERT|FAILED/.test(executionResultName)) {
+      if (recipient.toLowerCase() !== contractAddress.toLowerCase() || functionName !== "submit_proof") {
+        throw new Error(`${label} rejection metadata does not identify submit_proof on the V2.4 contract`);
+      }
+      return { hash, statusName, resultName, executionResultName, recipient, functionName };
+    }
+    if (terminalEnough && resultName === "AGREE" && executionResultName === "FINISHED_WITH_RETURN") {
+      throw new Error(`${label} unexpectedly succeeded`);
+    }
+    await sleep(5000);
+  }
+  throw new Error(`${label} did not reach the expected contract rejection state: ${previousState || "UNKNOWN"}`);
+}
+
+async function expectRejectedSubmission(client, contractAddress, account, state, fields) {
+  const hash = await checkpointedWrite(state, fields.txKey, fields.label, {
+    account,
+    address: contractAddress,
+    functionName: "submit_proof",
+    args: [fields.campaignId, fields.stake, fields.transactionUrl, fields.outcomeUrl, fields.feedback],
+    value: fields.stake
+  });
+  await waitExpectedContractRejection(client, hash, contractAddress, fields.label);
+  await finalizeWhenReady(client, account, hash, contractAddress, fields.label);
+  return waitExpectedContractRejection(client, hash, contractAddress, `Finalized ${fields.label}`, true);
+}
+
 async function finalizeWhenReady(client, account, hash, contractAddress, label) {
   const consensusAddress = testnetBradbury.consensusMainContract?.address;
   const finalizeAbi = (testnetBradbury.consensusMainContract?.abi ?? []).find(
@@ -365,7 +431,7 @@ async function finalizeWhenReady(client, account, hash, contractAddress, label) 
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.log(`  finalization deferred: ${message.split("\n")[0]}`);
-        if (/backpressure|not currently accepting|rate limit|429/i.test(message)) {
+        if (/backpressure|not currently accepting|rate limit|request exceeds defined limit|429/i.test(message)) {
           finalizationAttempted = false;
         }
         // A competing public finalizer may have won the race; re-read code/status.
@@ -408,7 +474,10 @@ async function createCampaign(client, contractAddress, account, state, fields) {
       fields.pool,
       fields.reward,
       fields.stake,
-      fields.minimumScore
+      fields.minimumScore,
+      fields.expectedRecipient,
+      fields.expectedMethod,
+      fields.expectedTaskIdentifier
     ],
     value: fields.pool
   });
@@ -492,7 +561,7 @@ async function closeCampaign(client, contractAddress, account, state, campaignId
   return { before, campaign, receipt, refundedAtto: refundBeforeClose.toString() };
 }
 
-function assertV3Report(submission, label, expectedValidationMethod) {
+function assertV4Report(submission, label, expectedValidationMethod) {
   const requiredTextFields = [
     "rubric_version",
     "validation_method",
@@ -504,18 +573,25 @@ function assertV3Report(submission, label, expectedValidationMethod) {
     "insight_reason",
     "originality_reason",
     "consensus_checks",
-    "settlement_explanation"
+    "settlement_explanation",
+    "evidence_transaction_hash",
+    "evidence_outcome_key",
+    "reservation_status",
+    "binding_analysis"
   ];
   for (const field of requiredTextFields) {
     if (!String(submission[field] ?? "").trim()) {
       throw new Error(`${label} is missing detailed report field ${field}`);
     }
   }
-  if (submission.rubric_version !== "VERDICTPROOF_V2_3") {
+  if (submission.rubric_version !== "VERDICTPROOF_V2_4") {
     throw new Error(`${label} used unexpected rubric ${submission.rubric_version}`);
   }
   if (submission.validation_method !== expectedValidationMethod) {
     throw new Error(`${label} used ${submission.validation_method}, expected ${expectedValidationMethod}`);
+  }
+  if (!['RESERVED', 'CONSUMED', 'RELEASED'].includes(submission.reservation_status)) {
+    throw new Error(`${label} used invalid reservation status ${submission.reservation_status}`);
   }
 }
 
@@ -591,13 +667,13 @@ async function main() {
     state = { contractAddress, transactions: {} };
   }
   saveVerificationState(state);
-  const deploymentReceipt = await waitExecuted(client, DEPLOYMENT_TX, "VerdictProof V2.3 deployment");
+  const deploymentReceipt = await waitExecuted(client, DEPLOYMENT_TX, "VerdictProof V2.4 deployment");
   const deploymentFinalizationEvmTx = await finalizeWhenReady(
     client,
     sponsor.account,
     DEPLOYMENT_TX,
     contractAddress,
-    "VerdictProof V2.3 deployment"
+    "VerdictProof V2.4 deployment"
   );
   const deploymentVerification = await verifyDeploymentMatchesLocal(client, contractAddress);
   const primary = await createCampaign(client, contractAddress, sponsor.account, state, {
@@ -605,7 +681,10 @@ async function main() {
     title: "First-Time Sponsor Campaign Launch Study",
     task: "Use VerdictProof to create a funded Bradbury campaign from your own tester wallet. Confirm the campaign appears in the live campaign board after finalization, then report whether wallet signing, transaction visibility, pool funding, and proof requirements are understandable.",
     proof: "Provide the finalized Bradbury create_campaign transaction from the tester wallet, the live campaign URL, funded amount, observed result, and one actionable UX improvement.",
-    pool: gen(0.25), reward: gen(0.04), stake: gen(0.02), minimumScore: 70n
+    pool: gen(0.12), reward: gen(0.04), stake: gen(0.02), minimumScore: 70n,
+    expectedRecipient: contractAddress,
+    expectedMethod: "create_campaign",
+    expectedTaskIdentifier: "Verdict and Transaction Clarity Study"
   });
   const primaryId = BigInt(primary.campaign.campaign_id);
   const evidenceCampaign = await createCampaign(client, contractAddress, approvedTester.account, state, {
@@ -613,9 +692,22 @@ async function main() {
     title: "Verdict and Transaction Clarity Study",
     task: "Complete one VerdictProof submission lifecycle and assess whether each wallet action has a clear transaction link, pending state, final verdict, and reward or slash explanation.",
     proof: "Provide finalized Bradbury transaction evidence, a public outcome URL, and specific feedback about settlement clarity.",
-    pool: gen(0.1), reward: gen(0.02), stake: gen(0.01), minimumScore: 70n
+    pool: gen(0.1), reward: gen(0.02), stake: gen(0.01), minimumScore: 70n,
+    expectedRecipient: contractAddress,
+    expectedMethod: "submit_proof",
+    expectedTaskIdentifier: "VP-EVIDENCE-LIFECYCLE-001"
   });
   const evidenceCampaignId = BigInt(evidenceCampaign.campaign.campaign_id);
+  const semanticEvidenceCampaign = await createCampaign(client, contractAddress, approvedTester.account, state, {
+    txKey: "createSemanticEvidenceCampaign",
+    title: "Verdict and Transaction Clarity Study",
+    task: "Create a separately finalized campaign transaction for a semantic evidence rejection test.",
+    proof: "Provide an independently consumable finalized Bradbury transaction and a distinct public outcome URL.",
+    pool: gen(0.1), reward: gen(0.02), stake: gen(0.01), minimumScore: 70n,
+    expectedRecipient: contractAddress,
+    expectedMethod: "submit_proof",
+    expectedTaskIdentifier: "VP-SEMANTIC-EVIDENCE-001"
+  });
   const evidenceOutcomeUrl = `${APP_URL}evidence/approved-campaign.html`;
 
   const approvedSubmission = await submitProof(client, contractAddress, approvedTester.account, state, {
@@ -627,6 +719,31 @@ async function main() {
     outcomeUrl: evidenceOutcomeUrl,
     feedback: `I created campaign #${evidenceCampaignId} from ${approvedTester.account.address} with a 0.10 GEN pool. The finalized transaction opens from the campaign flow and the new campaign appears on the live board with its reward, stake, and minimum score. The strongest improvement would be to show the newly created campaign ID beside the transaction link immediately after finalization so sponsors can connect the receipt to the resulting state without scanning the board.`
   });
+
+  const duplicateUsageBefore = await read(client, contractAddress, "get_evidence_usage", [
+    approvedSubmission.submission.transaction_url,
+    approvedSubmission.submission.app_result_url
+  ]);
+  if (duplicateUsageBefore.available || Number(duplicateUsageBefore.transaction_submission_id) !== Number(approvedSubmission.submission.submission_id)) {
+    throw new Error("Accepted evidence was not globally consumed before the duplicate test");
+  }
+  const duplicateRejection = await expectRejectedSubmission(client, contractAddress, rejectedTester.account, state, {
+    txKey: "rejectDuplicateEvidence",
+    label: "Duplicate evidence submission",
+    campaignId: primaryId,
+    stake: gen(0.02),
+    transactionUrl: `${approvedSubmission.submission.transaction_url}?ref=duplicate#receipt`,
+    outcomeUrl: `${approvedSubmission.submission.app_result_url}?view=alternate#report`,
+    feedback: "This intentionally reuses canonical evidence references and must revert before stake, reservation, or submission state is accepted."
+  });
+  const primaryAfterDuplicate = await read(client, contractAddress, "get_campaign", [primaryId]);
+  if (
+    Number(primaryAfterDuplicate.submission_count) !== 1 ||
+    BigInt(primaryAfterDuplicate.reward_pool) !== gen(0.08) ||
+    BigInt(primaryAfterDuplicate.reserved_reward_pool) !== gen(0.04)
+  ) {
+    throw new Error("Duplicate rejection changed campaign submission or reservation accounting");
+  }
 
   const rejectedSubmission = await submitProof(client, contractAddress, rejectedTester.account, state, {
     txKey: "submitRejectedEvidence",
@@ -643,10 +760,36 @@ async function main() {
     label: "semantic outcome mismatch evidence",
     campaignId: primaryId,
     stake: gen(0.02),
-    transactionUrl: txUrl(evidenceCampaign.receipt.hash),
+    transactionUrl: txUrl(semanticEvidenceCampaign.receipt.hash),
     outcomeUrl: `${APP_URL}evidence/semantic-mismatch.html`,
     feedback: "The Bradbury transaction is mine and finalized successfully, but this outcome URL is deliberately unrelated to VerdictProof and cannot demonstrate that the requested campaign appeared in the live board. A strong review must reject transaction-shaped evidence when the rendered product outcome does not substantiate the task, even if wallet ownership and execution are valid."
   });
+
+  const capacityTransactionUrl = txUrl(DEPLOYMENT_TX);
+  const capacityOutcomeUrl = `${APP_URL}evidence/capacity-exhausted.html?attempt=1#proof`;
+  const capacityUsageBefore = await read(client, contractAddress, "get_evidence_usage", [capacityTransactionUrl, capacityOutcomeUrl]);
+  if (!capacityUsageBefore.available) {
+    throw new Error("Capacity test references were unexpectedly consumed before submission");
+  }
+  const capacityRejection = await expectRejectedSubmission(client, contractAddress, rejectedTester.account, state, {
+    txKey: "rejectCapacityExhaustion",
+    label: "Unreserved reward capacity submission",
+    campaignId: primaryId,
+    stake: gen(0.02),
+    transactionUrl: capacityTransactionUrl,
+    outcomeUrl: capacityOutcomeUrl,
+    feedback: "This unique evidence is submitted only after every reward slot is reserved and must revert before stake or evidence references are consumed."
+  });
+  const capacityUsageAfter = await read(client, contractAddress, "get_evidence_usage", [capacityTransactionUrl, capacityOutcomeUrl]);
+  const primaryAtCapacity = await read(client, contractAddress, "get_campaign", [primaryId]);
+  if (
+    !capacityUsageAfter.available ||
+    Number(primaryAtCapacity.submission_count) !== 3 ||
+    BigInt(primaryAtCapacity.reward_pool) !== 0n ||
+    BigInt(primaryAtCapacity.reserved_reward_pool) !== gen(0.12)
+  ) {
+    throw new Error("Capacity rejection consumed evidence, stake, or campaign reservation state");
+  }
 
   const approvedReview = await reviewSubmission(
     client,
@@ -663,7 +806,13 @@ async function main() {
   if (!approvedReview.submission.transaction_success || !approvedReview.submission.identity_match || !approvedReview.submission.task_completed) {
     throw new Error("Approved review did not persist all three substantive evidence checks");
   }
-  assertV3Report(approvedReview.submission, "Approved review", "INDEPENDENT_COMPARATIVE");
+  if (!approvedReview.submission.recipient_match || !approvedReview.submission.method_match || !approvedReview.submission.task_identifier_match) {
+    throw new Error("Approved review did not persist all three exact campaign binding checks");
+  }
+  if (approvedReview.submission.reservation_status !== "CONSUMED") {
+    throw new Error("Approved review did not consume its reserved reward");
+  }
+  assertV4Report(approvedReview.submission, "Approved review", "INDEPENDENT_COMPARATIVE");
   assertVerifiedReviewReceipt(approvedReview.receipt, contractAddress, "Approved review");
 
   const rejectedReview = await reviewSubmission(
@@ -678,7 +827,10 @@ async function main() {
   if (rejectedReview.submission.status !== "REJECTED" || rejectedReview.submission.identity_match) {
     throw new Error(`Expected identity-mismatch rejection, received ${rejectedReview.submission.status}`);
   }
-  assertV3Report(rejectedReview.submission, "Identity-mismatch review", "INDEPENDENT_HARD_GATE_FEEDBACK");
+  if (rejectedReview.submission.reservation_status !== "RELEASED") {
+    throw new Error("Identity rejection did not release its reserved reward");
+  }
+  assertV4Report(rejectedReview.submission, "Identity-mismatch review", "INDEPENDENT_HARD_GATE_FEEDBACK");
   assertVerifiedReviewReceipt(rejectedReview.receipt, contractAddress, "Identity-mismatch review");
 
   const semanticReview = await reviewSubmission(
@@ -698,7 +850,13 @@ async function main() {
   ) {
     throw new Error(`Expected task-mismatch semantic rejection, received ${semanticReview.submission.status}`);
   }
-  assertV3Report(semanticReview.submission, "Semantic-mismatch review", "INDEPENDENT_COMPARATIVE");
+  if (!semanticReview.submission.recipient_match || !semanticReview.submission.method_match || !semanticReview.submission.task_identifier_match) {
+    throw new Error("Semantic rejection did not pass the exact campaign binding checks");
+  }
+  if (semanticReview.submission.reservation_status !== "RELEASED") {
+    throw new Error("Semantic rejection did not release its reserved reward");
+  }
+  assertV4Report(semanticReview.submission, "Semantic-mismatch review", "INDEPENDENT_COMPARATIVE");
   assertVerifiedReviewReceipt(semanticReview.receipt, contractAddress, "Semantic-mismatch review");
 
   const claimHash = await checkpointedWrite(state, "claimApprovedReward", "claim approved reward", {
@@ -720,7 +878,24 @@ async function main() {
   if (claimed.status !== "CLAIMED") {
     throw new Error(`Approved payout was not claimed: ${claimed.status}`);
   }
-  assertV3Report(claimed, "Claimed approved review", "INDEPENDENT_COMPARATIVE");
+  assertV4Report(claimed, "Claimed approved review", "INDEPENDENT_COMPARATIVE");
+
+  const closedPrimaryCampaign = await closeCampaign(
+    client,
+    contractAddress,
+    sponsor.account,
+    state,
+    primaryId,
+    "settled primary campaign",
+    "closePrimaryCampaign",
+    gen(0.12)
+  );
+  if (
+    BigInt(closedPrimaryCampaign.before.reserved_reward_pool) !== 0n ||
+    BigInt(closedPrimaryCampaign.refundedAtto) !== gen(0.12)
+  ) {
+    throw new Error("Primary campaign close did not enforce zero reservation and exact refund accounting");
+  }
 
   const closedEvidenceCampaign = await closeCampaign(
     client,
@@ -790,14 +965,35 @@ async function main() {
       title: campaign.title,
       approvedCount: campaign.approved_count,
       rejectedCount: campaign.rejected_count,
-      rewardPoolAtto: campaign.reward_pool
+      rewardPoolAtto: campaign.reward_pool,
+      reservedRewardPoolAtto: campaign.reserved_reward_pool,
+      expectedRecipient: campaign.expected_recipient,
+      expectedMethod: campaign.expected_method,
+      expectedTaskIdentifier: campaign.expected_task_identifier
     },
     closedCampaign: {
-      campaignId: closedEvidenceCampaign.campaign.campaign_id,
-      title: closedEvidenceCampaign.campaign.title,
-      status: closedEvidenceCampaign.campaign.status,
-      refundedAtto: closedEvidenceCampaign.refundedAtto,
-      rewardPoolAtto: closedEvidenceCampaign.campaign.reward_pool
+      campaignId: closedPrimaryCampaign.campaign.campaign_id,
+      title: closedPrimaryCampaign.campaign.title,
+      status: closedPrimaryCampaign.campaign.status,
+      refundedAtto: closedPrimaryCampaign.refundedAtto,
+      rewardPoolAtto: closedPrimaryCampaign.campaign.reward_pool,
+      reservedRewardPoolBeforeCloseAtto: closedPrimaryCampaign.before.reserved_reward_pool
+    },
+    contractRejections: {
+      duplicateEvidence: {
+        transaction: txUrl(duplicateRejection.hash),
+        consensus: duplicateRejection,
+        canonicalUsage: duplicateUsageBefore,
+        campaignSubmissionCountAfter: primaryAfterDuplicate.submission_count
+      },
+      capacityExhaustion: {
+        transaction: txUrl(capacityRejection.hash),
+        consensus: capacityRejection,
+        evidenceAvailableAfterRevert: capacityUsageAfter.available,
+        campaignSubmissionCountAfter: primaryAtCapacity.submission_count,
+        availableRewardPoolAtto: primaryAtCapacity.reward_pool,
+        reservedRewardPoolAtto: primaryAtCapacity.reserved_reward_pool
+      }
     },
     duplicateCampaignCleanup: closedDuplicateCampaign ? {
       campaignId: closedDuplicateCampaign.campaign.campaign_id,
@@ -810,13 +1006,17 @@ async function main() {
       deployment: txUrl(DEPLOYMENT_TX),
       createPrimaryCampaign: txUrl(primary.receipt.hash),
       createEvidenceCampaign: txUrl(evidenceCampaign.receipt.hash),
+      createSemanticEvidenceCampaign: txUrl(semanticEvidenceCampaign.receipt.hash),
       submitApprovedEvidence: txUrl(approvedSubmission.receipt.hash),
+      rejectDuplicateEvidence: txUrl(duplicateRejection.hash),
       submitRejectedEvidence: txUrl(rejectedSubmission.receipt.hash),
       submitSemanticRejection: txUrl(semanticSubmission.receipt.hash),
+      rejectCapacityExhaustion: txUrl(capacityRejection.hash),
       reviewApprovedEvidence: txUrl(approvedReview.receipt.hash),
       reviewRejectedEvidence: txUrl(rejectedReview.receipt.hash),
       reviewSemanticRejection: txUrl(semanticReview.receipt.hash),
       claimApprovedReward: txUrl(claimReceipt.hash),
+      closePrimaryCampaign: txUrl(closedPrimaryCampaign.receipt.hash),
       closeEvidenceCampaign: txUrl(closedEvidenceCampaign.receipt.hash),
       ...(closedDuplicateCampaign ? {
         closeDuplicateEvidenceCampaign: txUrl(closedDuplicateCampaign.receipt.hash)
@@ -826,7 +1026,10 @@ async function main() {
       reviewApprovedEvidence: approvedReview.receipt,
       reviewRejectedEvidence: rejectedReview.receipt,
       reviewSemanticRejection: semanticReview.receipt,
+      rejectDuplicateEvidence: duplicateRejection,
+      rejectCapacityExhaustion: capacityRejection,
       claimApprovedReward: claimReceipt,
+      closePrimaryCampaign: closedPrimaryCampaign.receipt,
       closeEvidenceCampaign: closedEvidenceCampaign.receipt,
       ...(closedDuplicateCampaign ? {
         closeDuplicateEvidenceCampaign: closedDuplicateCampaign.receipt

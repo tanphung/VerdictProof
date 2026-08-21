@@ -59,7 +59,10 @@ const defaultCampaignForm: CampaignForm = {
   rewardPool: "0.1",
   rewardPerApproved: "0.01",
   stakeRequired: "0.01",
-  minimumScore: "75"
+  minimumScore: "75",
+  expectedRecipient: "",
+  expectedMethod: "",
+  expectedTaskIdentifier: ""
 };
 
 const defaultProofForm: ProofForm = {
@@ -86,6 +89,11 @@ type ChainCampaign = {
   submission_count: number | string | bigint;
   approved_count: number | string | bigint;
   rejected_count: number | string | bigint;
+  expected_recipient: string;
+  expected_method: string;
+  expected_task_identifier: string;
+  reserved_reward_pool: string | number | bigint;
+  available_reward_slots: number | string | bigint;
 };
 
 type ChainSubmission = {
@@ -123,7 +131,23 @@ type ChainSubmission = {
   originality_reason?: string;
   consensus_checks?: string;
   settlement_explanation?: string;
+  evidence_transaction_hash?: string;
+  evidence_outcome_key?: string;
+  reserved_reward_amount?: string | number | bigint;
+  reservation_status?: string;
+  recipient_match?: boolean;
+  method_match?: boolean;
+  task_identifier_match?: boolean;
+  binding_analysis?: string;
   claimed: boolean;
+};
+
+type ChainEvidenceUsage = {
+  transaction_hash: string;
+  outcome_key: string;
+  transaction_submission_id: number | string | bigint;
+  outcome_submission_id: number | string | bigint;
+  available: boolean;
 };
 
 function toNumber(value: number | string | bigint) {
@@ -168,7 +192,11 @@ const ONCHAIN_REPORT_FIELDS: Array<[keyof Submission, string]> = [
   ["insightReason", "insight_reason"],
   ["originalityReason", "originality_reason"],
   ["consensusChecks", "consensus_checks"],
-  ["settlementExplanation", "settlement_explanation"]
+  ["settlementExplanation", "settlement_explanation"],
+  ["bindingAnalysis", "binding_analysis"],
+  ["evidenceTransactionHash", "evidence_transaction_hash"],
+  ["evidenceOutcomeKey", "evidence_outcome_key"],
+  ["reservationStatus", "reservation_status"]
 ];
 
 function missingOnchainReportFields(submission: Submission) {
@@ -190,7 +218,12 @@ function normalizeCampaign(item: ChainCampaign): Campaign {
     status: asCampaignStatus(item.status),
     submissionCount: toNumber(item.submission_count),
     approvedCount: toNumber(item.approved_count),
-    rejectedCount: toNumber(item.rejected_count)
+    rejectedCount: toNumber(item.rejected_count),
+    expectedRecipient: item.expected_recipient,
+    expectedMethod: item.expected_method,
+    expectedTaskIdentifier: item.expected_task_identifier,
+    reservedRewardPool: toBigInt(item.reserved_reward_pool),
+    availableRewardSlots: toNumber(item.available_reward_slots)
   };
 }
 
@@ -231,6 +264,18 @@ function normalizeSubmission(item: ChainSubmission, campaignTitle = "Live campai
     originalityReason: item.originality_reason ?? "",
     consensusChecks: item.consensus_checks ?? "",
     settlementExplanation: item.settlement_explanation ?? "",
+    evidenceTransactionHash: item.evidence_transaction_hash ?? "",
+    evidenceOutcomeKey: item.evidence_outcome_key ?? "",
+    reservedRewardAmount: toBigInt(item.reserved_reward_amount ?? 0),
+    reservationStatus: (
+      item.reservation_status === "CONSUMED" || item.reservation_status === "RELEASED"
+        ? item.reservation_status
+        : "RESERVED"
+    ),
+    recipientMatch: Boolean(item.recipient_match),
+    methodMatch: Boolean(item.method_match),
+    taskIdentifierMatch: Boolean(item.task_identifier_match),
+    bindingAnalysis: item.binding_analysis ?? "",
     claimed: Boolean(item.claimed)
   };
 }
@@ -375,15 +420,17 @@ function contractShortLabel() {
   return address.startsWith("0x") ? shortAddress(address) : address;
 }
 
-type StoredCampaign = Omit<Campaign, "rewardPool" | "rewardPerApproved" | "stakeRequired"> & {
+type StoredCampaign = Omit<Campaign, "rewardPool" | "rewardPerApproved" | "stakeRequired" | "reservedRewardPool"> & {
   rewardPool: string;
   rewardPerApproved: string;
   stakeRequired: string;
+  reservedRewardPool: string;
 };
 
-type StoredSubmission = Omit<Submission, "stakeAmount" | "rewardAmount"> & {
+type StoredSubmission = Omit<Submission, "stakeAmount" | "rewardAmount" | "reservedRewardAmount"> & {
   stakeAmount: string;
   rewardAmount: string;
+  reservedRewardAmount: string;
 };
 
 type StoredLiveState = {
@@ -400,12 +447,14 @@ function storeLiveState(state: LiveState) {
         ...campaign,
         rewardPool: campaign.rewardPool.toString(),
         rewardPerApproved: campaign.rewardPerApproved.toString(),
-        stakeRequired: campaign.stakeRequired.toString()
+        stakeRequired: campaign.stakeRequired.toString(),
+        reservedRewardPool: campaign.reservedRewardPool.toString()
       })),
       submissions: state.submissions.map((submission) => ({
         ...submission,
         stakeAmount: submission.stakeAmount.toString(),
-        rewardAmount: submission.rewardAmount.toString()
+        rewardAmount: submission.rewardAmount.toString(),
+        reservedRewardAmount: submission.reservedRewardAmount.toString()
       })),
       savedAt: Date.now()
     };
@@ -428,12 +477,14 @@ function loadStoredLiveState(): LiveState {
         ...campaign,
         rewardPool: BigInt(campaign.rewardPool || 0),
         rewardPerApproved: BigInt(campaign.rewardPerApproved || 0),
-        stakeRequired: BigInt(campaign.stakeRequired || 0)
+        stakeRequired: BigInt(campaign.stakeRequired || 0),
+        reservedRewardPool: BigInt(campaign.reservedRewardPool || 0)
       })),
       submissions: parsed.submissions.map((submission) => ({
         ...submission,
         stakeAmount: BigInt(submission.stakeAmount || 0),
         rewardAmount: BigInt(submission.rewardAmount || 0),
+        reservedRewardAmount: BigInt(submission.reservedRewardAmount || 0),
         transactionSuccess: Boolean(submission.transactionSuccess),
         identityMatch: Boolean(submission.identityMatch),
         taskCompleted: Boolean(submission.taskCompleted),
@@ -509,7 +560,9 @@ function App() {
   const mySubmissions = walletAddress
     ? submissions.filter((item) => item.tester.toLowerCase() === walletAddress.toLowerCase())
     : [];
-  const totalPool = campaigns.reduce((sum, campaign) => sum + campaign.rewardPool, 0n);
+  const totalAvailablePool = campaigns.reduce((sum, campaign) => sum + campaign.rewardPool, 0n);
+  const totalReservedPool = campaigns.reduce((sum, campaign) => sum + campaign.reservedRewardPool, 0n);
+  const totalPool = totalAvailablePool + totalReservedPool;
   const totalPending = submissions.filter((item) => item.status === "PENDING").length;
   const isLiveReady = Boolean(liveMode && provider && walletAddress);
   const latestTx = activeTx ?? txFeed.find((item) => item.hash) ?? null;
@@ -517,11 +570,13 @@ function App() {
   const stats = useMemo(
     () => [
       { label: "Reward pools", value: formatGen(totalPool), icon: CircleDollarSign },
+      { label: "Available", value: formatGen(totalAvailablePool), icon: Banknote },
+      { label: "Reserved", value: formatGen(totalReservedPool), icon: BadgeCheck },
       { label: "Campaigns", value: String(campaigns.length), icon: Layers3 },
       { label: "Pending reviews", value: String(totalPending), icon: Activity },
       { label: "My submissions", value: String(mySubmissions.length), icon: ClipboardCheck }
     ],
-    [campaigns.length, mySubmissions.length, totalPending, totalPool]
+    [campaigns.length, mySubmissions.length, totalAvailablePool, totalPending, totalPool, totalReservedPool]
   );
 
   const approvedSubmissions = submissions.filter((item) => item.status === "APPROVED" || item.status === "CLAIMED").length;
@@ -953,7 +1008,10 @@ function App() {
               pool,
               reward,
               stake,
-              BigInt(campaignForm.minimumScore)
+              BigInt(campaignForm.minimumScore),
+              campaignForm.expectedRecipient,
+              campaignForm.expectedMethod,
+              campaignForm.expectedTaskIdentifier
             ],
             pool
           ),
@@ -981,6 +1039,21 @@ function App() {
     const nextId = Math.max(...submissions.map((submission) => submission.submissionId), 0) + 1;
     setBusy("submit");
     try {
+      if (selectedCampaign.availableRewardSlots < 1) {
+        throw new Error("This campaign has no unreserved reward capacity for another submission.");
+      }
+      const usage = await readContract<ChainEvidenceUsage>("get_evidence_usage", [
+        proofForm.transactionUrl,
+        proofForm.appResultUrl
+      ]);
+      if (!usage.available) {
+        const consumedBy = toNumber(usage.transaction_submission_id || usage.outcome_submission_id || 0);
+        throw new Error(
+          consumedBy > 0
+            ? `This evidence reference was already consumed by Submission #${consumedBy}.`
+            : "The evidence URLs are not valid stable references."
+        );
+      }
       await runLiveWrite(
         "Stake and submit proof",
         "Open your wallet to approve the GEN stake for this proof...",
@@ -1513,6 +1586,10 @@ function ReviewHistory({
                       <span>Approval threshold</span>
                       <p>{campaign?.minimumScore ?? "—"}/100 · final score {submission.score}/100</p>
                     </div>
+                    <div>
+                      <span>Reward reservation</span>
+                      <p>{formatGen(submission.reservedRewardAmount)} · {submission.reservationStatus}</p>
+                    </div>
                   </section>
 
                   <div className="verification-grid" aria-label="Verified on-chain evidence checks">
@@ -1532,6 +1609,31 @@ function ReviewHistory({
                       passed={submission.taskCompleted}
                     />
                   </div>
+
+                  <section className="evidence-binding-report" aria-label="Exact campaign evidence binding">
+                    <div className="report-section-head">
+                      <span className="panel-overline">Evidence binding</span>
+                      <h5>Decoded from finalized GenLayer calldata</h5>
+                    </div>
+                    <div className="verification-grid">
+                      <VerificationFact
+                        label="Expected recipient"
+                        detail={campaign?.expectedRecipient ?? "Campaign binding unavailable."}
+                        passed={submission.recipientMatch}
+                      />
+                      <VerificationFact
+                        label="Expected method"
+                        detail={campaign?.expectedMethod ?? "Campaign binding unavailable."}
+                        passed={submission.methodMatch}
+                      />
+                      <VerificationFact
+                        label="Exact task identifier"
+                        detail={campaign?.expectedTaskIdentifier ?? "Campaign binding unavailable."}
+                        passed={submission.taskIdentifierMatch}
+                      />
+                    </div>
+                    {submission.bindingAnalysis ? <p>{submission.bindingAnalysis}</p> : null}
+                  </section>
 
                   <div className="rubric-grid detailed-rubric" aria-label="GenLayer review score breakdown">
                     <RubricScore label="Proof" value={submission.proofScore} maximum={40} reason={submission.proofReason} />
@@ -1570,6 +1672,10 @@ function ReviewHistory({
                       <span>Settlement</span>
                       <p>{submission.settlementExplanation}</p>
                     </div> : null}
+                    <div>
+                      <span>Consumed evidence references</span>
+                      <p>{submission.evidenceTransactionHash} · {submission.evidenceOutcomeKey}</p>
+                    </div>
                     {submission.riskFlags ? <div>
                       <span>Risk flags</span>
                       <p>{submission.riskFlags}</p>
@@ -1662,10 +1768,14 @@ function CampaignCard({ campaign, selected, onOpen }: { campaign: Campaign; sele
         {campaign.productUrl}
       </a>
       <div className="metric-grid">
-        <Metric label="Pool" value={formatGen(campaign.rewardPool)} />
+        <Metric label="Available" value={formatGen(campaign.rewardPool)} />
+        <Metric label="Reserved" value={formatGen(campaign.reservedRewardPool)} />
         <Metric label="Reward" value={formatGen(campaign.rewardPerApproved)} />
-        <Metric label="Stake" value={formatGen(campaign.stakeRequired)} />
-        <Metric label="Min score" value={`${campaign.minimumScore}/100`} />
+        <Metric label="Open slots" value={String(campaign.availableRewardSlots)} />
+      </div>
+      <div className="campaign-binding-summary">
+        <span>{shortAddress(campaign.expectedRecipient)} · {campaign.expectedMethod}</span>
+        <small>{campaign.expectedTaskIdentifier}</small>
       </div>
       <div className="pool-rail" aria-label="Campaign reward pool progress">
         <div className="pool-fill" style={{ width: `${poolPercent}%` }} />
@@ -1722,10 +1832,19 @@ function CampaignDetail({
       <div className="command-center-grid">
         <div>
           <div className="detail-grid">
-            <Metric label="Reward remaining" value={formatGen(campaign.rewardPool)} />
+            <Metric label="Available rewards" value={formatGen(campaign.rewardPool)} />
+            <Metric label="Pending reserved" value={formatGen(campaign.reservedRewardPool)} />
+            <Metric label="Reward slots" value={String(campaign.availableRewardSlots)} />
             <Metric label="Tester reward" value={formatGen(campaign.rewardPerApproved)} />
             <Metric label="Stake required" value={formatGen(campaign.stakeRequired)} />
             <Metric label="Minimum score" value={`${campaign.minimumScore}/100`} />
+          </div>
+
+          <div className="campaign-binding-panel">
+            <strong>Exact evidence binding</strong>
+            <p><span>Recipient</span>{campaign.expectedRecipient}</p>
+            <p><span>Method</span>{campaign.expectedMethod}</p>
+            <p><span>Task identifier</span>{campaign.expectedTaskIdentifier}</p>
           </div>
 
           <details className="requirement-box">
@@ -1751,7 +1870,7 @@ function CampaignDetail({
           ) : null}
         </div>
 
-        {campaign.status === "OPEN" ? (
+        {campaign.status === "OPEN" && campaign.availableRewardSlots > 0 ? (
         <form className="proof-form" onSubmit={onSubmitProof}>
           <h4>Stake GEN & Submit Proof</h4>
           <label>
@@ -1787,13 +1906,18 @@ function CampaignDetail({
             />
           </label>
           <p className="form-hint">
-            Validators verify transaction success, tester wallet ownership, task completion, and feedback quality.
+            Evidence references are consumed once. Validators independently verify execution, wallet ownership, exact recipient/method/task binding, task completion, and feedback quality.
           </p>
           <button className="primary-button full" type="submit" disabled={busy === "submit"}>
             {busy === "submit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />}
             Stake {formatGen(campaign.stakeRequired)} & Submit Proof
           </button>
         </form>
+        ) : campaign.status === "OPEN" ? (
+          <div className="proof-form closed-campaign-note">
+            <h4>Reward capacity fully reserved</h4>
+            <p>New submissions are blocked until pending reviews release a reservation or the campaign receives slashed stake.</p>
+          </div>
         ) : (
           <div className="proof-form closed-campaign-note">
             <h4>Campaign closed</h4>
@@ -2120,6 +2244,48 @@ function CreateCampaignModal({
             onChange={(event) => setForm({ ...form, productUrl: event.target.value })}
           />
         </label>
+        <div className="binding-fieldset">
+          <strong>Expected transaction binding</strong>
+          <p className="form-hint">
+            Every accepted proof must target this exact recipient and method, and include the task identifier as an exact calldata argument or kwarg.
+          </p>
+          <label>
+            Expected recipient
+            <input
+              spellCheck={false}
+              required
+              pattern="0x[a-fA-F0-9]{40}"
+              placeholder="0x... target Intelligent Contract"
+              value={form.expectedRecipient}
+              onChange={(event) => setForm({ ...form, expectedRecipient: event.target.value })}
+            />
+          </label>
+          <div className="form-grid">
+            <label>
+              Expected method
+              <input
+                spellCheck={false}
+                required
+                pattern="[A-Za-z_][A-Za-z0-9_]*"
+                placeholder="create_campaign"
+                value={form.expectedMethod}
+                onChange={(event) => setForm({ ...form, expectedMethod: event.target.value })}
+              />
+            </label>
+            <label>
+              Task identifier
+              <input
+                spellCheck={false}
+                required
+                minLength={3}
+                maxLength={120}
+                placeholder="VP-TASK-2026-001"
+                value={form.expectedTaskIdentifier}
+                onChange={(event) => setForm({ ...form, expectedTaskIdentifier: event.target.value })}
+              />
+            </label>
+          </div>
+        </div>
         <label>
           Task instruction
           <textarea

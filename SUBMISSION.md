@@ -16,13 +16,14 @@ is specific and useful. VerdictProof makes that judgment the on-chain
 settlement boundary:
 
 1. Every validator independently reads the finalized Bradbury receipt.
-2. Receipt execution and tester identity are derived from objective fields.
+2. Receipt execution, tester identity, expected recipient, decoded method, and exact task identifier are derived from objective fields.
 3. For valid receipt and identity gates, every validator independently renders
    the outcome evidence and runs the same versioned semantic rubric.
 4. The contract accepts the leader report only when the validators agree on the
    evidence gates, verdict, deterministic proof score, and bounded subjective
    score differences.
-5. The consensus-approved result controls stake return, reward reservation,
+5. Evidence transaction and outcome references are consumed once, and reward capacity is reserved atomically when the submission is accepted.
+6. The consensus-approved result controls stake return, reservation consumption or release,
    slashing, claiming, and campaign close/refund state.
 
 Removing GenLayer would remove the independent evidence judgment that controls
@@ -50,6 +51,15 @@ complete multi-wallet workflow:
 - every published review hash points to this contract and the
   `evaluate_submission` method with `FINALIZED / AGREE /
   FINISHED_WITH_RETURN` metadata.
+
+## Steward remediation in V2.4
+
+- Each campaign stores an expected recipient, method, and task identifier.
+- Every validator independently decodes the finalized GenLayer calldata and checks all three exact bindings.
+- Canonical transaction hashes and stable outcome URLs are consumed globally at submission acceptance.
+- `submit_proof` reserves one full reward before accepting tester stake; insufficient capacity reverts before a submission is created.
+- Approval consumes the reservation, rejection releases it and slashes stake, and transient review failures leave it reserved.
+- The Dashboard renders the binding checks, canonical evidence references, reservation status, and settlement explanation directly from finalized contract state.
 
 This is a controlled public pilot with real on-chain workflows. It does not
 claim external users, customers, or adoption that has not been independently
@@ -79,7 +89,7 @@ demonstrated.
 
 ## Reviewer notes
 
-- Rubric version: `VERDICTPROOF_V2_3`.
+- Candidate rubric version: `VERDICTPROOF_V2_4`; production remains on verified V2.3 until the V2.4 Bradbury workflow and source/schema match are complete.
 - Validation methods: `INDEPENDENT_COMPARATIVE` and
   `INDEPENDENT_HARD_GATE_FEEDBACK`.
 - The report is the consensus-approved leader narrative; the UI does not invent

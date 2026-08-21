@@ -1390,6 +1390,57 @@ textarea:focus {
   font-size: 12px;
 }
 
+.binding-fieldset,
+.campaign-binding-panel,
+.evidence-binding-report {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 94%, var(--accent) 6%);
+  padding: 14px;
+}
+
+.binding-fieldset > strong,
+.campaign-binding-panel > strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.campaign-binding-summary {
+  display: grid;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-left: 2px solid var(--accent);
+  overflow-wrap: anywhere;
+}
+
+.campaign-binding-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.campaign-binding-panel p {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 10px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.campaign-binding-panel p span {
+  color: var(--muted);
+}
+
+.evidence-binding-report {
+  display: grid;
+  gap: 12px;
+}
+
+.evidence-binding-report h5,
+.evidence-binding-report p {
+  margin: 0;
+}
+
 .review-detail-grid {
   min-width: 0;
   max-width: 100%;

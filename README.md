@@ -28,6 +28,8 @@ The V2.3 deployment reached `FINALIZED / AGREE / FINISHED_WITH_RETURN` with 5/5 
 5c5624351a4de6f1e79c58ce7595b7837053b03128637e7cfbf7e95776da4d33
 ```
 
+> Release status: the repository is preparing the V2.4 steward remediation described below. The public app remains pinned to the verified V2.3 deployment until V2.4 passes StudioNet and Bradbury verification; no unverified address is presented as the live release.
+
 ## The Trust Problem
 
 Traditional reward campaigns can verify that a form was submitted, but not whether someone actually completed a product task or provided useful feedback. This creates an incentive to submit unrelated transactions, copied comments, or generic praise.
@@ -37,8 +39,8 @@ Deterministic code can enforce campaign ownership, exact funding, tester stake, 
 VerdictProof uses GenLayer only at that evidence boundary:
 
 1. A sponsor publishes the task, proof requirement, reward, stake, and approval threshold.
-2. A tester stakes the exact required GEN and submits public evidence.
-3. The contract reads the finalized Bradbury receipt and derives execution and wallet identity from RPC data.
+2. A tester stakes the exact required GEN and submits previously unused public evidence; the contract atomically reserves one reward before accepting it.
+3. The contract reads the finalized Bradbury receipt and derives execution, wallet identity, exact recipient, decoded method, and task identifier from RPC data and GenLayer calldata.
 4. The leader and validators independently evaluate the product outcome and written feedback with the same versioned rubric.
 5. Consensus commits the verdict and detailed report to contract state.
 6. Approved testers claim stake plus reward; rejected stake returns to the campaign pool.
@@ -50,11 +52,11 @@ GenLayer is therefore the settlement layer, not an AI label added to an otherwis
 
 ```mermaid
 flowchart LR
-  A[Sponsor creates and funds campaign] --> B[Tester stakes GEN]
-  B --> C[Tester submits finalized transaction, outcome, and feedback]
+  A[Sponsor creates and funds campaign] --> B[Tester submits stake, transaction, outcome, and feedback]
+  B --> C[Contract consumes evidence references and reserves reward]
   C --> D[Leader and validators independently check evidence]
-  D -->|Approved| E[Reward reserved]
-  D -->|Rejected| F[Stake returned to campaign pool]
+  D -->|Approved| E[Reserved reward becomes claimable]
+  D -->|Rejected| F[Reservation released and stake slashed]
   E --> G[Tester claims stake plus reward]
   F --> H[Sponsor closes settled campaign]
   G --> H
@@ -70,10 +72,12 @@ Every review separates objective evidence gates from semantic judgment.
 - The submitted receipt must be finalized.
 - Consensus and execution must indicate successful execution.
 - The receipt sender must match the submitting tester wallet.
-- The transaction recipient and decoded call must represent the submitted workflow.
+- The receipt recipient must exactly match the campaign's expected recipient.
+- The decoded GenLayer method must exactly match the campaign's expected method.
+- An exact decoded calldata argument or kwarg must match the campaign task identifier.
 - The outcome URL must use the campaign product origin.
 
-Execution or identity failure takes the hard-gate path without rendering the outcome. These facts are derived from the Bradbury receipt, not accepted from an LLM response.
+Execution, identity, recipient, method, task-identifier, or product-origin failure takes the hard-gate path without rendering the outcome. These facts are derived from the Bradbury receipt and decoded calldata, not accepted from an LLM response.
 
 ### Semantic review
 
@@ -109,13 +113,16 @@ The frontend:
 | `close_campaign` | Close a fully reviewed campaign | Remaining pool refunded to sponsor |
 | `get_submission` | Read one report | Full finalized report fields |
 | `list_campaign_submissions` | Read campaign history | Public review and settlement history |
+| `get_evidence_usage` | Check canonical evidence references | Global one-time consumption status |
 
 ## Settlement Safety
 
 - Campaign funding and tester stake must exactly match `gl.message.value` in integer attoGEN.
 - A submission can be evaluated only while pending.
-- Approved rewards are reserved from the campaign pool before claim.
-- Rejected stake is added back to the campaign pool.
+- Transaction hashes and canonical outcome URLs are globally consumed when a submission is accepted.
+- One reward is moved from available pool to pending reservation at submission acceptance.
+- Approval consumes the reservation without reading the later available pool balance.
+- Rejection releases the reservation and adds the slashed stake to the available pool.
 - Claims use a tester-only pull flow and cannot be executed twice.
 - A campaign can close only when no submission remains pending.
 - Closing a campaign does not invalidate an already reserved approved claim.
@@ -140,7 +147,7 @@ The artifact contains public addresses, transaction hashes, verdict fields, and 
 | Gate | Latest verified result |
 | --- | --- |
 | GenVM lint and validation | Pass |
-| Direct contract tests | 37 passed |
+| Direct contract tests | 43 passed |
 | StudioNet consensus integration | 1 passed |
 | Frontend tests | 33 passed |
 | TypeScript unused-code check | Pass |

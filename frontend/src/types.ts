@@ -16,6 +16,11 @@ export type Campaign = {
   submissionCount: number;
   approvedCount: number;
   rejectedCount: number;
+  expectedRecipient: string;
+  expectedMethod: string;
+  expectedTaskIdentifier: string;
+  reservedRewardPool: bigint;
+  availableRewardSlots: number;
 };
 
 export type Submission = {
@@ -54,6 +59,14 @@ export type Submission = {
   originalityReason: string;
   consensusChecks: string;
   settlementExplanation: string;
+  evidenceTransactionHash: string;
+  evidenceOutcomeKey: string;
+  reservedRewardAmount: bigint;
+  reservationStatus: "RESERVED" | "CONSUMED" | "RELEASED";
+  recipientMatch: boolean;
+  methodMatch: boolean;
+  taskIdentifierMatch: boolean;
+  bindingAnalysis: string;
   claimed: boolean;
 };
 
@@ -66,6 +79,9 @@ export type CampaignForm = {
   rewardPerApproved: string;
   stakeRequired: string;
   minimumScore: string;
+  expectedRecipient: string;
+  expectedMethod: string;
+  expectedTaskIdentifier: string;
 };
 
 export type ProofForm = {

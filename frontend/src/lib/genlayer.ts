@@ -20,7 +20,7 @@ export const CONTRACT_ADDRESS = runtimeConfig?.contractAddress || import.meta.en
 export const EXPLORER =
   runtimeConfig?.explorer || import.meta.env.VITE_GENLAYER_EXPLORER || "https://explorer-bradbury.genlayer.com";
 export const CHAIN = testnetBradbury;
-export const RUBRIC_VERSION = runtimeConfig?.rubricVersion || "VERDICTPROOF_V2_3";
+export const RUBRIC_VERSION = runtimeConfig?.rubricVersion || "VERDICTPROOF_V2_4";
 export const REVIEW_TRANSACTIONS = runtimeConfig?.reviewTransactions ?? {};
 
 export type Eip1193Provider = {
