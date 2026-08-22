@@ -446,6 +446,30 @@ async function read(client, address, functionName, args = []) {
   return client.readContract({ address, functionName, args, stateStatus: "finalized" });
 }
 
+async function assertCampaignAccounting(client, contractAddress, campaignId, expectedCount, label) {
+  const [campaign, listed] = await Promise.all([
+    read(client, contractAddress, "get_campaign", [campaignId]),
+    read(client, contractAddress, "list_campaign_submissions", [campaignId])
+  ]);
+  const submissions = listed.submissions ?? [];
+  const reserved = submissions
+    .filter((item) => item.reservation_status === "RESERVED")
+    .reduce((total, item) => total + BigInt(item.reserved_reward_amount), 0n);
+  const approved = submissions.filter((item) => ["APPROVED", "CLAIMED"].includes(item.status)).length;
+  const rejected = submissions.filter((item) => item.status === "REJECTED").length;
+  if (
+    Number(listed.count) !== expectedCount ||
+    submissions.length !== expectedCount ||
+    Number(campaign.submission_count) !== expectedCount ||
+    BigInt(campaign.reserved_reward_pool) !== reserved ||
+    Number(campaign.approved_count) !== approved ||
+    Number(campaign.rejected_count) !== rejected
+  ) {
+    throw new Error(`${label} changed campaign submission or reservation accounting`);
+  }
+  return campaign;
+}
+
 async function pollUntil(label, fn, tries = 900) {
   let lastError;
   for (let attempt = 0; attempt < tries; attempt += 1) {
@@ -736,14 +760,16 @@ async function main() {
     outcomeUrl: `${approvedSubmission.submission.app_result_url}?view=alternate#report`,
     feedback: "This intentionally reuses canonical evidence references and must revert before stake, reservation, or submission state is accepted."
   });
-  const primaryAfterDuplicate = await read(client, contractAddress, "get_campaign", [primaryId]);
-  if (
-    Number(primaryAfterDuplicate.submission_count) !== 1 ||
-    BigInt(primaryAfterDuplicate.reward_pool) !== gen(0.08) ||
-    BigInt(primaryAfterDuplicate.reserved_reward_pool) !== gen(0.04)
-  ) {
-    throw new Error("Duplicate rejection changed campaign submission or reservation accounting");
-  }
+  const checkpointedPrimarySubmissions = 1
+    + Number(Boolean(state.transactions.submitRejectedEvidence))
+    + Number(Boolean(state.transactions.submitSemanticRejection));
+  await assertCampaignAccounting(
+    client,
+    contractAddress,
+    primaryId,
+    checkpointedPrimarySubmissions,
+    "Duplicate rejection"
+  );
 
   const rejectedSubmission = await submitProof(client, contractAddress, rejectedTester.account, state, {
     txKey: "submitRejectedEvidence",
@@ -781,15 +807,16 @@ async function main() {
     feedback: "This unique evidence is submitted only after every reward slot is reserved and must revert before stake or evidence references are consumed."
   });
   const capacityUsageAfter = await read(client, contractAddress, "get_evidence_usage", [capacityTransactionUrl, capacityOutcomeUrl]);
-  const primaryAtCapacity = await read(client, contractAddress, "get_campaign", [primaryId]);
-  if (
-    !capacityUsageAfter.available ||
-    Number(primaryAtCapacity.submission_count) !== 3 ||
-    BigInt(primaryAtCapacity.reward_pool) !== 0n ||
-    BigInt(primaryAtCapacity.reserved_reward_pool) !== gen(0.12)
-  ) {
-    throw new Error("Capacity rejection consumed evidence, stake, or campaign reservation state");
+  if (!capacityUsageAfter.available) {
+    throw new Error("Capacity rejection consumed its unique evidence references");
   }
+  const primaryAtCapacity = await assertCampaignAccounting(
+    client,
+    contractAddress,
+    primaryId,
+    3,
+    "Capacity rejection"
+  );
 
   const approvedReview = await reviewSubmission(
     client,

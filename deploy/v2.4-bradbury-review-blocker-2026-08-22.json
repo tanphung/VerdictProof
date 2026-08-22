@@ -1,0 +1,50 @@
+{
+  "kind": "VERDICTPROOF_V2_4_BRADBURY_REVIEW_BLOCKER",
+  "observed_at": "2026-08-22",
+  "network": "testnet-bradbury",
+  "contract_address": "0x9f8A1f6892ff71822b010f84D2B3a26F5533994e",
+  "contract_source_sha256": "6b46869739c1cf3406b1f6a0e91576086c1b9814d2874c0b64a662bf66c8664d",
+  "deployment_transaction": "0xf5b803071640c459d8dddf79d6380156d4b260f17cc12409516bb29a7f9ff60a",
+  "review_transaction": "0x9ffdb1f333bf62b56a37d3185a18b4dc40d7550f008294607ecfa10c87784f10",
+  "review_lifecycle": "APPEAL_REVEALING",
+  "consensus_result": "IDLE",
+  "leader_execution": "FINISHED_WITH_RETURN",
+  "rotations_left": 3,
+  "validator_summary": {
+    "total": 11,
+    "agree": 5,
+    "deterministic_violation": 2,
+    "timeout": 3,
+    "not_voted": 1
+  },
+  "validator_votes": [
+    "AGREE",
+    "DETERMINISTIC_VIOLATION",
+    "TIMEOUT",
+    "TIMEOUT",
+    "AGREE",
+    "AGREE",
+    "AGREE",
+    "TIMEOUT",
+    "DETERMINISTIC_VIOLATION",
+    "NOT_VOTED",
+    "AGREE"
+  ],
+  "finalized_state": {
+    "submission_status": "PENDING",
+    "reservation_status": "RESERVED",
+    "campaign_submission_count": 3,
+    "available_reward_pool_atto": "0",
+    "reserved_reward_pool_atto": "120000000000000000"
+  },
+  "verification_completed_before_blocker": [
+    "deployment finalized and deployed code/schema matched local source",
+    "three campaigns finalized",
+    "approved, identity-mismatch, and semantic-mismatch proof submissions finalized",
+    "duplicate evidence submission finalized with FINISHED_WITH_ERROR",
+    "capacity exhaustion submission finalized with FINISHED_WITH_ERROR",
+    "duplicate and capacity failures left submission and reservation accounting consistent"
+  ],
+  "rollout_decision": "STOPPED: production remains on the previously verified release until this review reaches terminal AGREE and the remaining review, claim, close, refund, artifact, and smoke-test gates pass.",
+  "contains_secrets": false
+}
