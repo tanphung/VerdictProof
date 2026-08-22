@@ -12,8 +12,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXPLORER = "https://explorer-bradbury.genlayer.com";
 const APP_URL = "https://verdictproof.vercel.app/";
 const INITIAL_VALIDATORS = 5n;
-const DEPLOYMENT_TX = "0xf5b803071640c459d8dddf79d6380156d4b260f17cc12409516bb29a7f9ff60a";
-const DEPLOYED_SOURCE_SHA256 = "6b46869739c1cf3406b1f6a0e91576086c1b9814d2874c0b64a662bf66c8664d";
+const DEPLOYMENT_TX = "0x78b3c3e79c050ccb3851dd4152d0a5dee911d49c11758243582a839d5b756791";
+const DEPLOYED_SOURCE_SHA256 = "fd7b918e3371303fcf1bd0f3c44c510d038dfee6a638d8a5395732a733ab3426";
 const VERIFICATION_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-verification-state.json");
 const publicClient = createPublicClient({
   chain: testnetBradbury,
@@ -328,7 +328,7 @@ async function waitExpectedContractRejection(client, hash, contractAddress, labe
     const terminalEnough = requireFinalized ? statusName === "FINALIZED" : /ACCEPTED|FINALIZED/.test(statusName);
     if (terminalEnough && resultName === "AGREE" && /ERROR|REVERT|FAILED/.test(executionResultName)) {
       if (recipient.toLowerCase() !== contractAddress.toLowerCase() || functionName !== "submit_proof") {
-        throw new Error(`${label} rejection metadata does not identify submit_proof on the V2.4 contract`);
+        throw new Error(`${label} rejection metadata does not identify submit_proof on the V2.4.1 contract`);
       }
       return { hash, statusName, resultName, executionResultName, recipient, functionName };
     }
@@ -608,7 +608,7 @@ function assertV4Report(submission, label, expectedValidationMethod) {
       throw new Error(`${label} is missing detailed report field ${field}`);
     }
   }
-  if (submission.rubric_version !== "VERDICTPROOF_V2_4") {
+  if (submission.rubric_version !== "VERDICTPROOF_V2_4_1") {
     throw new Error(`${label} used unexpected rubric ${submission.rubric_version}`);
   }
   if (submission.validation_method !== expectedValidationMethod) {
@@ -691,13 +691,13 @@ async function main() {
     state = { contractAddress, transactions: {} };
   }
   saveVerificationState(state);
-  const deploymentReceipt = await waitExecuted(client, DEPLOYMENT_TX, "VerdictProof V2.4 deployment");
+  const deploymentReceipt = await waitExecuted(client, DEPLOYMENT_TX, "VerdictProof V2.4.1 deployment");
   const deploymentFinalizationEvmTx = await finalizeWhenReady(
     client,
     sponsor.account,
     DEPLOYMENT_TX,
     contractAddress,
-    "VerdictProof V2.4 deployment"
+    "VerdictProof V2.4.1 deployment"
   );
   const deploymentVerification = await verifyDeploymentMatchesLocal(client, contractAddress);
   const primary = await createCampaign(client, contractAddress, sponsor.account, state, {
