@@ -157,6 +157,69 @@ def feedback_reviews_equivalent(contract, leader, validator):
     return module._feedback_reviews_equivalent(leader, validator)
 
 
+def test_validator_prompts_request_decision_fields_only(direct_deploy, monkeypatch):
+    contract = direct_deploy(CONTRACT)
+    module = sys.modules[type(contract).__module__]
+    prompts = []
+
+    monkeypatch.setattr(module, "_render_text", lambda _url: "Campaign 2 is visible with its funded pool.")
+
+    def fake_prompt(prompt, response_format="json"):
+        assert response_format == "json"
+        prompts.append(prompt)
+        return {
+            "task_completed": True,
+            "feedback_score": 20,
+            "insight_score": 16,
+            "originality_score": 12,
+        }
+
+    monkeypatch.setattr(module.gl.nondet, "exec_prompt", fake_prompt)
+    transaction = {
+        "transaction_hash": TX_HASH,
+        "sender": "0x1111111111111111111111111111111111111111",
+        "recipient": EXPECTED_RECIPIENT,
+        "status": 7,
+        "consensus_result": 1,
+        "execution_result": 1,
+        "calldata_method": EXPECTED_METHOD,
+        "calldata_string_values": [EXPECTED_TASK_IDENTIFIER],
+    }
+    binding = {"recipient_match": True, "method_match": True, "task_identifier_match": True}
+    feedback = (
+        "The campaign transaction, wallet, stake, reward, proof, review, and dashboard were clear. "
+        "The result should show the campaign identifier beside its receipt so settlement is easier to verify."
+    )
+
+    module._score_semantic_submission(
+        "https://example.com",
+        "Create a campaign and verify it.",
+        "Show the finalized transaction and public outcome.",
+        transaction,
+        "https://example.com/evidence",
+        feedback,
+        transaction["sender"],
+        70,
+        binding,
+        False,
+    )
+    module._score_hard_gate_feedback(
+        "Create a campaign and verify it.",
+        "Show the finalized transaction and public outcome.",
+        feedback,
+        transaction,
+        transaction["sender"],
+        binding,
+        True,
+        False,
+    )
+
+    assert "task_reason" not in prompts[0]
+    assert "JSON keys: task_completed, feedback_score, insight_score, originality_score." in prompts[0]
+    assert "Only the three scores" in prompts[1]
+    assert "improvement_recommendation" not in prompts[1]
+
+
 def review_candidate(**overrides):
     candidate = {
         "transaction_success": True,
@@ -601,7 +664,7 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
     assert reviewed["usage_valid"] is True
     assert reviewed["proof_score"] == 40
     assert reviewed["reward_amount"] == str(REWARD)
-    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_4"
+    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_4_1"
     assert reviewed["validation_method"] == "INDEPENDENT_COMPARATIVE"
     assert reviewed["transaction_analysis"].startswith("Receipt ")
     assert "matches tester" in reviewed["identity_analysis"]
