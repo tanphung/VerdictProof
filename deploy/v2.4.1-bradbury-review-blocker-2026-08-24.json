@@ -1,0 +1,88 @@
+{
+  "kind": "VERDICTPROOF_V2_4_1_BRADBURY_REVIEW_BLOCKER",
+  "observed_at": "2026-08-24",
+  "network": "testnet-bradbury",
+  "contract_address": "0x3e29aDDd77803FF3A15f5dE181fb570374Fe30C1",
+  "contract_source_sha256": "fd7b918e3371303fcf1bd0f3c44c510d038dfee6a638d8a5395732a733ab3426",
+  "deployment_transaction": "0x78b3c3e79c050ccb3851dd4152d0a5dee911d49c11758243582a839d5b756791",
+  "review_attempts": [
+    {
+      "transaction": "0x4f5907075855cdc4c55b267ccbe8aab7c1430f42b12613d4b0098386dfe60a34",
+      "lifecycle": "FINALIZED",
+      "consensus_result": "IDLE",
+      "leader_execution": "FINISHED_WITH_RETURN",
+      "rounds": 1,
+      "last_round": {
+        "validators": 7,
+        "votes_committed": 6,
+        "votes_revealed": 0,
+        "rotations_left": 3
+      },
+      "idleness_recovery_transactions": [
+        "0xf16377ceb347b870c237a09f53e66c36cadfbfc348dfa064e00e19a9e0176920",
+        "0xe61a4f14a7a53d6c4517af3f560d3f4fe9d580ce0a1c23e8ea3db619d440a304",
+        "0xc9b15ee51880cb67ed6b115dc99564be6e1b307762c2feb247eee86e8225160f",
+        "0xc43cee651cee6c1dd74ed3ab0d8fac9b0cfeffe3a5f623cdbc810cd19569fd03"
+      ]
+    },
+    {
+      "transaction": "0x5a82b92541dc321454387ef8ccf03dc50ac9b8a46f28c8d935712670ae33fffd",
+      "lifecycle": "UNDETERMINED",
+      "consensus_result": "DISAGREE",
+      "leader_execution": "FINISHED_WITH_RETURN",
+      "rounds": 6,
+      "last_round": {
+        "validators": 17,
+        "votes_committed": 17,
+        "votes_revealed": 17,
+        "rotations_left": 0,
+        "agree": 1,
+        "deterministic_violation": 9,
+        "timeout": 7
+      },
+      "validator_votes": [
+        "DETERMINISTIC_VIOLATION",
+        "DETERMINISTIC_VIOLATION",
+        "TIMEOUT",
+        "TIMEOUT",
+        "DETERMINISTIC_VIOLATION",
+        "TIMEOUT",
+        "TIMEOUT",
+        "DETERMINISTIC_VIOLATION",
+        "DETERMINISTIC_VIOLATION",
+        "DETERMINISTIC_VIOLATION",
+        "DETERMINISTIC_VIOLATION",
+        "DETERMINISTIC_VIOLATION",
+        "TIMEOUT",
+        "AGREE",
+        "TIMEOUT",
+        "DETERMINISTIC_VIOLATION",
+        "TIMEOUT"
+      ],
+      "idleness_recovery_transactions": [
+        "0x5c225b97910042e579910e874dcfb34192701ba4426ebd31ef3c218c53325813",
+        "0xb2a70793b6b6a9fcc3d45063ed8c837dd321af115054531ed862f82c1d27b890"
+      ]
+    }
+  ],
+  "finalized_state": {
+    "submission_statuses": ["PENDING", "PENDING", "PENDING"],
+    "reservation_statuses": ["RESERVED", "RESERVED", "RESERVED"],
+    "campaign_status": "OPEN",
+    "campaign_submission_count": 3,
+    "campaign_approved_count": 0,
+    "campaign_rejected_count": 0,
+    "available_reward_pool_atto": "0",
+    "reserved_reward_pool_atto": "120000000000000000"
+  },
+  "verification_completed_before_blocker": [
+    "deployment finalized and deployed source/schema matched local source",
+    "three campaigns finalized",
+    "approved, identity-mismatch, and semantic-mismatch proof submissions finalized",
+    "duplicate evidence submission finalized with FINISHED_WITH_ERROR and did not consume additional state",
+    "capacity exhaustion submission finalized with FINISHED_WITH_ERROR and left unique evidence available",
+    "GenVM lint, 44 direct tests, StudioNet consensus, 34 frontend tests, production audit, and frontend build passed"
+  ],
+  "rollout_decision": "STOPPED: two independent approved-review transactions failed to reach AGREE on Bradbury. Production remains on the previously verified V2.3 release. Claim, close/refund, V2.4.1 artifact replacement, production rollout, and steward resubmission are not presented as complete.",
+  "contains_secrets": false
+}
