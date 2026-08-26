@@ -6,6 +6,7 @@ web/LLM review. Full validator agreement should be covered by integration tests.
 
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -157,6 +158,11 @@ def feedback_reviews_equivalent(contract, leader, validator):
     return module._feedback_reviews_equivalent(leader, validator)
 
 
+def pipeline_results_equivalent(contract, leader, validator, minimum_score=75):
+    module = sys.modules[type(contract).__module__]
+    return module._pipeline_results_equivalent(leader, validator, minimum_score)
+
+
 def test_validator_prompts_request_decision_fields_only(direct_deploy, monkeypatch):
     contract = direct_deploy(CONTRACT)
     module = sys.modules[type(contract).__module__]
@@ -236,6 +242,56 @@ def review_candidate(**overrides):
     }
     candidate.update(overrides)
     return candidate
+
+
+def pipeline_candidate(**report_overrides):
+    report = review_candidate(
+        proof_score=40,
+        score=92,
+        rubric_version="VERDICTPROOF_V2_4_2",
+        validation_method="INDEPENDENT_COMPARATIVE",
+        **report_overrides,
+    )
+    return {
+        "transaction": {
+            "transaction_hash": TX_HASH,
+            "sender": "0x1111111111111111111111111111111111111111",
+            "recipient": EXPECTED_RECIPIENT,
+            "status": 7,
+            "consensus_result": 1,
+            "execution_result": 1,
+            "calldata_method": EXPECTED_METHOD,
+            "calldata_string_values": [EXPECTED_TASK_IDENTIFIER],
+        },
+        "binding": {
+            "recipient_match": True,
+            "method_match": True,
+            "task_identifier_match": True,
+        },
+        "outcome_origin_match": True,
+        "report": report,
+    }
+
+
+def test_evaluate_submission_uses_one_nondeterministic_consensus_block():
+    source = Path(CONTRACT).read_text(encoding="utf-8")
+    assert source.count("gl.vm.run_nondet_unsafe(") == 1
+
+
+def test_pipeline_comparison_requires_exact_receipt_and_binding(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    leader = pipeline_candidate()
+    validator = pipeline_candidate(feedback_score=20, insight_score=16, originality_score=12)
+    validator["report"]["score"] = 88
+    assert pipeline_results_equivalent(contract, leader, validator) is True
+
+    wrong_receipt = pipeline_candidate()
+    wrong_receipt["transaction"]["transaction_hash"] = "0x" + "ab" * 32
+    assert pipeline_results_equivalent(contract, leader, wrong_receipt) is False
+
+    wrong_binding = pipeline_candidate()
+    wrong_binding["binding"]["task_identifier_match"] = False
+    assert pipeline_results_equivalent(contract, leader, wrong_binding) is False
 
 
 def test_create_campaign_stores_fields(direct_vm, direct_deploy, direct_owner):
@@ -664,7 +720,7 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
     assert reviewed["usage_valid"] is True
     assert reviewed["proof_score"] == 40
     assert reviewed["reward_amount"] == str(REWARD)
-    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_4_1"
+    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_4_2"
     assert reviewed["validation_method"] == "INDEPENDENT_COMPARATIVE"
     assert reviewed["transaction_analysis"].startswith("Receipt ")
     assert "matches tester" in reviewed["identity_analysis"]
@@ -1002,7 +1058,7 @@ def test_hard_gate_validator_accepts_scores_within_component_tolerance(direct_de
     assert feedback_reviews_equivalent(contract, leader, validator) is True
 
 
-def test_llm_error_does_not_rerun_leader_pipeline(direct_deploy):
+def test_llm_error_does_not_rerun_leader_pipeline(direct_deploy, monkeypatch):
     contract = direct_deploy(CONTRACT)
     module = sys.modules[type(contract).__module__]
     calls = []
@@ -1010,11 +1066,13 @@ def test_llm_error_does_not_rerun_leader_pipeline(direct_deploy):
     class LeaderError:
         message = "[LLM_ERROR] malformed response"
 
-    def should_not_run():
+    def should_not_run(*_args, **_kwargs):
         calls.append(True)
         return {}
 
-    assert module._handle_leader_error(LeaderError(), should_not_run) is False
+    monkeypatch.setattr(module, "_fetch_finalized_bradbury_transaction", should_not_run)
+    monkeypatch.setattr(module, "_render_text", should_not_run)
+    assert module._handle_pipeline_leader_error(LeaderError(), TX_URL, "https://example.com/result") is False
     assert calls == []
 
 

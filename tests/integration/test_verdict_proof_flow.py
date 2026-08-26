@@ -142,7 +142,7 @@ def test_full_semantic_and_hard_gate_consensus_flow():
     assert approved["reservation_status"] == "CONSUMED"
 
     for result in (identity, semantic_reject, approved):
-        assert result["rubric_version"] == "VERDICTPROOF_V2_4_1"
+        assert result["rubric_version"] == "VERDICTPROOF_V2_4_2"
         assert result["score"] == (
             result["proof_score"] + result["feedback_score"]
             + result["insight_score"] + result["originality_score"]

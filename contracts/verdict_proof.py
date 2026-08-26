@@ -28,7 +28,7 @@ MAX_TASK_IDENTIFIER_CHARS=120
 MAX_PROMPT_TASK_CHARS=600
 MAX_PROMPT_PROOF_CHARS=600
 MAX_PROMPT_FEEDBACK_CHARS=1000
-RUBRIC_VERSION='VERDICTPROOF_V2_4_1'
+RUBRIC_VERSION='VERDICTPROOF_V2_4_2'
 VALIDATION_METHOD='INDEPENDENT_COMPARATIVE'
 HARD_GATE_VALIDATION_METHOD='INDEPENDENT_HARD_GATE_FEEDBACK'
 CONSENSUS_CHECKS='EXACT_EVIDENCE_GATES|EXACT_APPROVAL|DETERMINISTIC_PROOF|VALID_TOTAL_DELTA_12|VALID_FEEDBACK_DELTA_5|VALID_INSIGHT_DELTA_4|VALID_ORIGINALITY_DELTA_3|INVALID_TOTAL_DELTA_24|INVALID_FEEDBACK_DELTA_10|INVALID_INSIGHT_DELTA_8|INVALID_ORIGINALITY_DELTA_6'
@@ -209,6 +209,11 @@ def _fetch_bradbury_transaction(url:str):
 	except gl.vm.UserError:raise
 	except Exception:raise gl.vm.UserError(f"{ERR_TRANSIENT} Bradbury RPC request temporarily failed")
 def _transaction_succeeded(transaction:typing.Optional[dict]):return bool(transaction and int(transaction['status'])==7 and int(transaction['consensus_result'])==1 and int(transaction['execution_result'])==1)
+def _fetch_finalized_bradbury_transaction(url:str):
+	transaction=_fetch_bradbury_transaction(url)
+	if not isinstance(transaction,dict):raise gl.vm.UserError(f"{ERR_EXTERNAL} Bradbury transaction URL was invalid")
+	if int(transaction['status'])!=7:raise gl.vm.UserError(f"{ERR_TRANSIENT} evidence transaction is not finalized yet")
+	return transaction
 def _receipt_facts_equivalent(leader:typing.Any,validator:typing.Any):
 	if not isinstance(leader,dict)or not isinstance(validator,dict):return False
 	try:
@@ -267,27 +272,6 @@ def _reviews_equivalent(leader:typing.Any,validator:typing.Any,minimum_score:int
 			if abs(int(leader['originality_score'])-int(validator['originality_score']))>INVALID_ORIGINALITY_SCORE_TOLERANCE:return False
 		return True
 	except Exception:return False
-def _handle_leader_error(leaders_res:gl.vm.Result,leader_fn:typing.Callable[[],dict]):
-	leader_message=str(getattr(leaders_res,'message',''))
-	if leader_message.startswith(ERR_LLM):return False
-	if not leader_message.startswith((ERR_EXPECTED,ERR_EXTERNAL,ERR_TRANSIENT)):return False
-	try:leader_fn();return False
-	except gl.vm.UserError as exc:
-		validator_message=str(getattr(exc,'message',str(exc)))
-		if validator_message.startswith(ERR_EXPECTED)or validator_message.startswith(ERR_EXTERNAL):return validator_message==leader_message
-		if validator_message.startswith(ERR_TRANSIENT)and leader_message.startswith(ERR_TRANSIENT):return True
-		return False
-	except Exception:return False
-def _handle_semantic_leader_error(leaders_res:gl.vm.Result,app_result_url:str):
-	leader_message=str(getattr(leaders_res,'message',''))
-	if leader_message.startswith(ERR_LLM):return False
-	if not leader_message.startswith((ERR_EXTERNAL,ERR_TRANSIENT)):return False
-	try:_render_text(app_result_url);return False
-	except gl.vm.UserError as exc:
-		validator_message=str(getattr(exc,'message',str(exc)))
-		if validator_message.startswith(ERR_EXTERNAL):return validator_message==leader_message
-		return validator_message.startswith(ERR_TRANSIENT)and leader_message.startswith(ERR_TRANSIENT)
-	except Exception:return False
 def _feedback_reviews_equivalent(leader:typing.Any,validator:typing.Any):
 	if not isinstance(leader,dict)or not isinstance(validator,dict):return False
 	try:
@@ -343,6 +327,40 @@ Fixed hard gates: transaction_success={transaction_success}; identity_match={ide
 	except gl.vm.UserError:raise
 	except Exception:raise gl.vm.UserError(f"{ERR_LLM} AI review could not produce a valid structured result")
 	data['transaction_success']=transaction_success;data['identity_match']=identity_match;data['task_completed']=_parse_bool(data.get('task_completed'))and _has_verifiable_outcome(transaction,product_url,app_result_url,app_result_text,feedback_text,tester_address,binding);data['proof_score']=40 if data['task_completed']else 20;data['usage_valid']=transaction_success and identity_match and data['task_completed'];feedback_score=_anchored_score(data.get('feedback_score'),25,5);insight_score=_anchored_score(data.get('insight_score'),20,4);originality_score=_anchored_score(data.get('originality_score'),15,3);component_score=int(data['proof_score'])+feedback_score+insight_score+originality_score;data['feedback_score']=feedback_score;data['insight_score']=insight_score;data['originality_score']=originality_score;data['approved']=bool(data['usage_valid'])and component_score>=minimum_score;tx_hash=str(transaction['transaction_hash']);method_text=str(transaction['calldata_method']);task_reason=_clean_text(data.get('task_reason','Outcome checked against campaign task.'),MAX_REVIEW_DETAIL_CHARS);data['transaction_analysis']=f"Receipt {tx_hash} finalized AGREE/success; calldata {_clean_text(method_text,90)}.";data['identity_analysis']=f"Receipt sender {transaction["sender"]} matches tester {tester_address}.";data['task_analysis']=task_reason;data['proof_reason']='Full proof: receipt, identity, and outcome verified.'if data['task_completed']else'Partial proof: receipt and identity passed; outcome failed.';data['evidence_summary']='Receipt, identity, and same-origin outcome were checked.';data['reason_summary']='Approved: gates passed and score met threshold.'if data['approved']else'Rejected: outcome did not prove the task.'if not data['task_completed']else'Rejected: score was below threshold.';data['settlement_explanation']='Approved: tester may claim stake plus reward.'if data['approved']else'Rejected: stake returns to campaign pool.';return _normalize_review(data,minimum_score)
+def _evaluate_pipeline(product_url:str,task_instruction:str,proof_requirement:str,transaction_url:str,app_result_url:str,feedback_text:str,tester_address:str,minimum_score:int,expected_recipient:str,expected_method:str,expected_task_identifier:str,full_report:bool=True):
+	transaction=_fetch_finalized_bradbury_transaction(transaction_url)
+	transaction_success=_transaction_succeeded(transaction);identity_match=str(transaction['sender']).lower()==tester_address.lower();outcome_origin_match=_url_host(product_url)==_url_host(app_result_url);binding=_binding_facts(transaction,expected_recipient,expected_method,expected_task_identifier)
+	if not transaction_success or not identity_match or not outcome_origin_match or not bool(binding['recipient_match'])or not bool(binding['method_match'])or not bool(binding['task_identifier_match']):
+		report=_score_hard_gate_feedback(task_instruction,proof_requirement,feedback_text,transaction,tester_address,binding,outcome_origin_match,full_report)
+	else:
+		report=_score_semantic_submission(product_url,task_instruction,proof_requirement,transaction,app_result_url,feedback_text,tester_address,minimum_score,binding,full_report)
+	return{'transaction':transaction,'binding':binding,'outcome_origin_match':outcome_origin_match,'report':report}
+def _pipeline_results_equivalent(leader:typing.Any,validator:typing.Any,minimum_score:int):
+	if not isinstance(leader,dict)or not isinstance(validator,dict):return False
+	try:
+		if not _receipt_facts_equivalent(leader['transaction'],validator['transaction']):return False
+		for key in('recipient_match','method_match','task_identifier_match'):
+			if bool(leader['binding'][key])!=bool(validator['binding'][key]):return False
+		if bool(leader['outcome_origin_match'])!=bool(validator['outcome_origin_match']):return False
+		leader_report=leader['report'];validator_report=validator['report']
+		if str(leader_report['rubric_version'])!=RUBRIC_VERSION or str(validator_report['rubric_version'])!=RUBRIC_VERSION:return False
+		if str(leader_report['validation_method'])!=str(validator_report['validation_method']):return False
+		if str(leader_report['validation_method'])==HARD_GATE_VALIDATION_METHOD:return _feedback_reviews_equivalent(leader_report,validator_report)
+		if str(leader_report['validation_method'])==VALIDATION_METHOD:return _reviews_equivalent(leader_report,validator_report,minimum_score)
+		return False
+	except Exception:return False
+def _pipeline_error_equivalent(leader_message:str,validator_message:str):
+	if validator_message.startswith(ERR_EXPECTED)or validator_message.startswith(ERR_EXTERNAL):return validator_message==leader_message
+	return validator_message.startswith(ERR_TRANSIENT)and leader_message.startswith(ERR_TRANSIENT)
+def _handle_pipeline_leader_error(leaders_res:gl.vm.Result,transaction_url:str,app_result_url:str):
+	leader_message=str(getattr(leaders_res,'message',''))
+	if leader_message.startswith(ERR_LLM):return False
+	if not leader_message.startswith((ERR_EXPECTED,ERR_EXTERNAL,ERR_TRANSIENT)):return False
+	stage=typing.cast(typing.Callable[[],typing.Any],lambda:_fetch_finalized_bradbury_transaction(transaction_url))if'Bradbury'in leader_message or'evidence transaction'in leader_message else typing.cast(typing.Callable[[],typing.Any],lambda:_render_text(app_result_url))if'outcome page'in leader_message else None
+	if stage is None:return False
+	try:stage();return False
+	except gl.vm.UserError as exc:return _pipeline_error_equivalent(leader_message,str(getattr(exc,'message',str(exc))))
+	except Exception:return False
 @allow_storage
 @dataclass
 class Campaign:campaign_id:u256;owner:Address;title:str;product_url:str;task_instruction:str;proof_requirement:str;reward_pool:u256;reward_per_approved:u256;stake_required:u256;minimum_score:u256;status:str;submission_count:u256;approved_count:u256;rejected_count:u256;expected_recipient:str;expected_method:str;expected_task_identifier:str;reserved_reward_pool:u256
@@ -396,31 +414,13 @@ class VerdictProof(gl.Contract):
 		submission=self.submissions[submission_id]
 		if submission.status!=STATUS_PENDING:raise gl.vm.UserError(f"{ERR_EXPECTED} submission is not pending")
 		campaign=self.campaigns[submission.campaign_id];product_url=str(campaign.product_url);task_instruction=str(campaign.task_instruction);proof_requirement=str(campaign.proof_requirement);transaction_url=str(submission.transaction_url);app_result_url=str(submission.app_result_url);feedback_text=str(submission.feedback_text);tester_address=submission.tester.as_hex;minimum_score=int(campaign.minimum_score);reward_per_approved=int(campaign.reward_per_approved);expected_recipient=str(campaign.expected_recipient);expected_method=str(campaign.expected_method);expected_task_identifier=str(campaign.expected_task_identifier)
-		def receipt_leader_fn():return _fetch_bradbury_transaction(transaction_url)
-		def receipt_validator_fn(leaders_res:gl.vm.Result):
-			if not isinstance(leaders_res,gl.vm.Return):return _handle_leader_error(leaders_res,receipt_leader_fn)
-			try:validator_receipt=_fetch_bradbury_transaction(transaction_url)
+		def leader_fn():return _evaluate_pipeline(product_url,task_instruction,proof_requirement,transaction_url,app_result_url,feedback_text,tester_address,minimum_score,expected_recipient,expected_method,expected_task_identifier)
+		def validator_fn(leaders_res:gl.vm.Result):
+			if not isinstance(leaders_res,gl.vm.Return):return _handle_pipeline_leader_error(leaders_res,transaction_url,app_result_url)
+			try:validator_result=_evaluate_pipeline(product_url,task_instruction,proof_requirement,transaction_url,app_result_url,feedback_text,tester_address,minimum_score,expected_recipient,expected_method,expected_task_identifier,False)
 			except Exception:return False
-			return _receipt_facts_equivalent(leaders_res.calldata,validator_receipt)
-		transaction=gl.vm.run_nondet_unsafe(receipt_leader_fn,receipt_validator_fn)
-		if int(transaction['status'])!=7:raise gl.vm.UserError(f"{ERR_TRANSIENT} evidence transaction is not finalized yet")
-		transaction_success=_transaction_succeeded(transaction);identity_match=str(transaction['sender']).lower()==tester_address.lower();outcome_origin_match=_url_host(product_url)==_url_host(app_result_url);binding=_binding_facts(transaction,expected_recipient,expected_method,expected_task_identifier)
-		if not transaction_success or not identity_match or not outcome_origin_match or not bool(binding['recipient_match'])or not bool(binding['method_match'])or not bool(binding['task_identifier_match']):
-			def hard_gate_leader_fn():return _score_hard_gate_feedback(task_instruction,proof_requirement,feedback_text,transaction,tester_address,binding,outcome_origin_match)
-			def hard_gate_validator_fn(leaders_res:gl.vm.Result):
-				if not isinstance(leaders_res,gl.vm.Return):return _handle_leader_error(leaders_res,lambda:_score_hard_gate_feedback(task_instruction,proof_requirement,feedback_text,transaction,tester_address,binding,outcome_origin_match,False))
-				try:validator_result=_score_hard_gate_feedback(task_instruction,proof_requirement,feedback_text,transaction,tester_address,binding,outcome_origin_match,False)
-				except Exception:return False
-				return _feedback_reviews_equivalent(leaders_res.calldata,validator_result)
-			result=gl.vm.run_nondet_unsafe(hard_gate_leader_fn,hard_gate_validator_fn)
-		else:
-			def semantic_leader_fn():return _score_semantic_submission(product_url,task_instruction,proof_requirement,transaction,app_result_url,feedback_text,tester_address,minimum_score,binding)
-			def semantic_validator_fn(leaders_res:gl.vm.Result):
-				if not isinstance(leaders_res,gl.vm.Return):return _handle_semantic_leader_error(leaders_res,app_result_url)
-				try:validator_result=_score_semantic_submission(product_url,task_instruction,proof_requirement,transaction,app_result_url,feedback_text,tester_address,minimum_score,binding,False)
-				except Exception:return False
-				return _reviews_equivalent(leaders_res.calldata,validator_result,minimum_score)
-			result=gl.vm.run_nondet_unsafe(semantic_leader_fn,semantic_validator_fn)
+			return _pipeline_results_equivalent(leaders_res.calldata,validator_result,minimum_score)
+		pipeline=gl.vm.run_nondet_unsafe(leader_fn,validator_fn);transaction=pipeline['transaction'];binding=pipeline['binding'];result=pipeline['report']
 		score=int(result['score']);approved=bool(result['approved'])and bool(result['usage_valid'])and score>=minimum_score;reason=str(result['reason_summary'])[:MAX_REASON_CHARS];reserved_reward=int(submission.reserved_reward_amount)
 		if reserved_reward!=reward_per_approved or submission.reservation_status!='RESERVED':raise gl.vm.UserError(f"{ERR_EXPECTED} submission reward reservation is invalid")
 		if int(campaign.reserved_reward_pool)<reserved_reward:raise gl.vm.UserError(f"{ERR_EXPECTED} campaign reward reservation is invalid")
