@@ -16,7 +16,7 @@ import { testnetBradbury } from "genlayer-js/chains";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const RPC_URL = testnetBradbury.rpcUrls.default.http[0];
 const INITIAL_VALIDATORS = 5n;
-const rpcTransport = () => http(RPC_URL, { retryCount: 0, timeout: 60_000 });
+const rpcTransport = () => http(RPC_URL, { retryCount: 0, timeout: 120_000 });
 
 function readEnv(path) {
   const values = {};
@@ -102,7 +102,15 @@ async function main() {
     throw new Error("Bradbury addTransaction ABI is unavailable");
   }
 
-  const source = readFileSync(resolve(ROOT, "contracts", "verdict_proof.py"), "utf8");
+  let source = readFileSync(resolve(ROOT, "contracts", "verdict_proof.py"), "utf8");
+  const controlContract = String(process.env.VERDICTPROOF_DEPLOY_CONTROL_CONTRACT ?? "");
+  if (controlContract) {
+    if (process.env.VERDICTPROOF_DEPLOY_DRY_RUN !== "1" || !/^0x[a-fA-F0-9]{40}$/.test(controlContract)) {
+      throw new Error("VERDICTPROOF_DEPLOY_CONTROL_CONTRACT is only allowed for a valid dry-run control");
+    }
+    source = await createClient({ chain: testnetBradbury }).getContractCode(controlContract);
+    console.log(`Dry-run control uses deployed source from ${controlContract}.`);
+  }
   const constructorCalldata = genlayerAbi.calldata.encode(
     genlayerAbi.calldata.makeCalldataObject(undefined, [], undefined)
   );
@@ -125,15 +133,25 @@ async function main() {
 
   const publicClient = createPublicClient({ chain: testnetBradbury, transport: rpcTransport() });
   let gas = 0n;
-  try {
-    const estimated = await publicClient.estimateGas({ account, to: consensusAddress, data });
-    gas = (estimated * 6n) / 5n + 250_000n;
-    console.log(`Bradbury gas estimate accepted: ${estimated}`);
-  } catch (error) {
-    const detail = String(error?.details ?? error?.cause?.message ?? "").split("\n")[0];
-    const message = detail || (error instanceof Error ? error.message.split("\n")[0] : String(error));
-    throw new Error(`Bradbury gas estimate unavailable; deployment was not sent: ${message}`);
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      const estimated = await publicClient.estimateGas({ account, to: consensusAddress, data });
+      gas = (estimated * 6n) / 5n + 250_000n;
+      console.log(`Bradbury gas estimate accepted: ${estimated}`);
+      break;
+    } catch (error) {
+      const detail = String(error?.details ?? error?.cause?.message ?? "").split("\n")[0];
+      const message = detail || (error instanceof Error ? error.message.split("\n")[0] : String(error));
+      const capacityLimited = /BlockPubdataLimitReached|-32005|gas rate limit exceeded|node is at capacity/i.test(message);
+      if (!capacityLimited || attempt === 5) {
+        throw new Error(`Bradbury gas estimate unavailable; deployment was not sent: ${message}`);
+      }
+      const waitMs = 15_000 * attempt;
+      console.log(`Bradbury estimate capacity-limited; retrying in ${waitMs}ms (${attempt}/5).`);
+      await new Promise((resolveSleep) => setTimeout(resolveSleep, waitMs));
+    }
   }
+  if (gas === 0n) throw new Error("Bradbury gas estimate did not produce a usable gas limit");
   if (process.env.VERDICTPROOF_DEPLOY_DRY_RUN === "1") {
     console.log(`Dry run complete; no transaction was signed or sent. Selected gas: ${gas}.`);
     return;

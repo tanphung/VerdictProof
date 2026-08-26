@@ -160,7 +160,7 @@ def feedback_reviews_equivalent(contract, leader, validator):
 
 def pipeline_results_equivalent(contract, leader, validator, minimum_score=75):
     module = sys.modules[type(contract).__module__]
-    return module._pipeline_results_equivalent(leader, validator, minimum_score)
+    return module._pipeline_eq(leader, validator, minimum_score)
 
 
 def test_validator_prompts_request_decision_fields_only(direct_deploy, monkeypatch):
@@ -1070,9 +1070,9 @@ def test_llm_error_does_not_rerun_leader_pipeline(direct_deploy, monkeypatch):
         calls.append(True)
         return {}
 
-    monkeypatch.setattr(module, "_fetch_finalized_bradbury_transaction", should_not_run)
+    monkeypatch.setattr(module, "_fetch_final_tx", should_not_run)
     monkeypatch.setattr(module, "_render_text", should_not_run)
-    assert module._handle_pipeline_leader_error(LeaderError(), TX_URL, "https://example.com/result") is False
+    assert module._pipeline_error_eq(LeaderError(), TX_URL, "https://example.com/result") is False
     assert calls == []
 
 
