@@ -12,9 +12,12 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXPLORER = "https://explorer-bradbury.genlayer.com";
 const APP_URL = "https://verdictproof.vercel.app/";
 const INITIAL_VALIDATORS = 5n;
-const DEPLOYMENT_TX = "0x78b3c3e79c050ccb3851dd4152d0a5dee911d49c11758243582a839d5b756791";
-const DEPLOYED_SOURCE_SHA256 = "fd7b918e3371303fcf1bd0f3c44c510d038dfee6a638d8a5395732a733ab3426";
+const DEPLOYMENT_TX = "0x3c41c5aa0f6f899d94e0012d22d91c348edf65b1b028bf976de590aacfc3f175";
+const DEPLOYED_SOURCE_SHA256 = "11c59cbe5d4d2c2863963af946c2292e965ad6886b0e81ef6b48b9c993b0fbd0";
 const VERIFICATION_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-verification-state.json");
+const REMEDIATION_TARGET_TITLE = "V2.4.1 Verifiable Campaign Creation";
+const REMEDIATION_TASK_IDENTIFIER = "VP-V241-BOUND-EVIDENCE-20260825";
+const REMEDIATION_OUTCOME_URL = `${APP_URL}evidence/v241-bound-campaign-20260825.html`;
 const publicClient = createPublicClient({
   chain: testnetBradbury,
   transport: http(testnetBradbury.rpcUrls.default.http[0])
@@ -322,13 +325,14 @@ async function waitExpectedContractRejection(client, hash, contractAddress, labe
       console.log(`  lifecycle: ${stateName}`);
       previousState = stateName;
     }
-    if (/UNDETERMINED|CANCELED/.test(statusName) || (/ACCEPTED|FINALIZED/.test(statusName) && resultName !== "AGREE")) {
+    const consensusRejected = /DISAGREE|REJECTED|FAILED/.test(resultName);
+    if (/UNDETERMINED|CANCELED/.test(statusName) || consensusRejected) {
       throw new Error(`${label} failed at consensus instead of being deterministically rejected by the contract: ${stateName}`);
     }
     const terminalEnough = requireFinalized ? statusName === "FINALIZED" : /ACCEPTED|FINALIZED/.test(statusName);
     if (terminalEnough && resultName === "AGREE" && /ERROR|REVERT|FAILED/.test(executionResultName)) {
       if (recipient.toLowerCase() !== contractAddress.toLowerCase() || functionName !== "submit_proof") {
-        throw new Error(`${label} rejection metadata does not identify submit_proof on the V2.4.1 contract`);
+        throw new Error(`${label} rejection metadata does not identify submit_proof on the V2.4.2 contract`);
       }
       return { hash, statusName, resultName, executionResultName, recipient, functionName };
     }
@@ -585,6 +589,142 @@ async function closeCampaign(client, contractAddress, account, state, campaignId
   return { before, campaign, receipt, refundedAtto: refundBeforeClose.toString() };
 }
 
+async function loadBradburyContext() {
+  const rootEnv = readEnv(resolve(ROOT, ".env"));
+  const frontendEnv = readEnv(resolve(ROOT, "frontend", ".env"));
+  const contractAddress = frontendEnv.VITE_VERDICTPROOF_CONTRACT_ADDRESS;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(contractAddress ?? "")) {
+    throw new Error("VITE_VERDICTPROOF_CONTRACT_ADDRESS is missing or invalid in frontend/.env");
+  }
+  const sponsor = loadAccount(rootEnv, "Sponsor", "VERDICTPROOF_SPONSOR_PRIVATE_KEY", "VERDICTPROOF_SPONSOR_ADDRESS");
+  const approvedTester = loadAccount(
+    rootEnv,
+    "Approved tester",
+    "VERDICTPROOF_APPROVED_TESTER_PRIVATE_KEY",
+    "VERDICTPROOF_APPROVED_TESTER_ADDRESS"
+  );
+  const client = createClient({ chain: testnetBradbury });
+  const state = loadVerificationState();
+  if (state.contractAddress.toLowerCase() !== contractAddress.toLowerCase()) {
+    throw new Error("Bradbury checkpoint does not belong to the configured V2.4.2 contract");
+  }
+  return { rootEnv, contractAddress, sponsor, approvedTester, client, state };
+}
+
+async function findCampaignByTitle(client, contractAddress, title) {
+  const listed = await read(client, contractAddress, "list_campaigns", [0n, 100n]);
+  const matches = (listed.campaigns ?? []).filter((item) => item.title === title);
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one campaign titled ${title}, found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+async function prepareRemediationEvidence() {
+  const { contractAddress, sponsor, approvedTester, client, state } = await loadBradburyContext();
+  await verifyDeploymentMatchesLocal(client, contractAddress);
+
+  const target = await createCampaign(client, contractAddress, sponsor.account, state, {
+    txKey: "remediationCreateTargetCampaign",
+    title: REMEDIATION_TARGET_TITLE,
+    task: "Create a funded VerdictProof campaign from the tester wallet and prove the exact finalized campaign state on the public product origin.",
+    proof: "Provide the finalized create_campaign receipt, exact campaign ID, owner wallet, contract recipient, method, task identifier, funded pool, live state, and one evidence-grounded UX observation.",
+    pool: gen(0.1), reward: gen(0.02), stake: gen(0.01), minimumScore: 70n,
+    expectedRecipient: contractAddress,
+    expectedMethod: "create_campaign",
+    expectedTaskIdentifier: REMEDIATION_TASK_IDENTIFIER
+  });
+  const evidence = await createCampaign(client, contractAddress, approvedTester.account, state, {
+    txKey: "remediationCreateEvidenceCampaign",
+    title: REMEDIATION_TASK_IDENTIFIER,
+    task: "Record a concrete Bradbury campaign-creation result for independent verification.",
+    proof: "Use the finalized receipt and finalized VerdictProof state as the authoritative result.",
+    pool: gen(0.1), reward: gen(0.02), stake: gen(0.01), minimumScore: 70n,
+    expectedRecipient: contractAddress,
+    expectedMethod: "submit_proof",
+    expectedTaskIdentifier: "VP-V241-NESTED-EVIDENCE-20260825"
+  });
+
+  const metadata = {
+    contractAddress,
+    targetCampaignId: Number(target.campaign.campaign_id),
+    evidenceCampaignId: Number(evidence.campaign.campaign_id),
+    evidenceCampaignOwner: approvedTester.account.address,
+    evidenceTransactionHash: evidence.receipt.hash,
+    evidenceTransactionUrl: txUrl(evidence.receipt.hash),
+    evidenceTransactionStatus: evidence.receipt.statusName,
+    evidenceConsensusResult: evidence.receipt.resultName,
+    evidenceExecutionResult: evidence.receipt.executionResultName,
+    expectedMethod: "create_campaign",
+    expectedTaskIdentifier: REMEDIATION_TASK_IDENTIFIER,
+    fundedPoolAtto: String(evidence.campaign.reward_pool),
+    campaignStatus: evidence.campaign.status,
+    outcomeUrl: REMEDIATION_OUTCOME_URL
+  };
+  console.log("REMEDIATION_EVIDENCE_METADATA");
+  console.log(JSON.stringify(metadata, null, 2));
+}
+
+async function submitAndReviewRemediationEvidence() {
+  const { contractAddress, sponsor, approvedTester, client, state } = await loadBradburyContext();
+  const target = await findCampaignByTitle(client, contractAddress, REMEDIATION_TARGET_TITLE);
+  const evidence = await findCampaignByTitle(client, contractAddress, REMEDIATION_TASK_IDENTIFIER);
+  const evidenceHash = state.transactions.remediationCreateEvidenceCampaign;
+  if (!/^0x[a-fA-F0-9]{64}$/.test(evidenceHash ?? "")) {
+    throw new Error("Remediation evidence transaction checkpoint is missing");
+  }
+  const page = await fetch(REMEDIATION_OUTCOME_URL, { cache: "no-store" });
+  const pageText = await page.text();
+  const requiredMarkers = [
+    contractAddress.toLowerCase(),
+    evidenceHash.toLowerCase(),
+    approvedTester.account.address.toLowerCase(),
+    `campaign #${evidence.campaign_id}`.toLowerCase(),
+    REMEDIATION_TASK_IDENTIFIER.toLowerCase(),
+    "finalized / agree / finished_with_return"
+  ];
+  if (!page.ok || requiredMarkers.some((marker) => !pageText.toLowerCase().includes(marker))) {
+    throw new Error("Public remediation evidence page is unavailable or missing authoritative markers");
+  }
+
+  const feedback = `Campaign #${evidence.campaign_id} was created from ${approvedTester.account.address} through create_campaign on ${contractAddress}. The finalized receipt ${evidenceHash} and the live state both show the ${REMEDIATION_TASK_IDENTIFIER} campaign with a 0.10 GEN funded pool. Wallet signing and the campaign card were clear; the actionable improvement is to show the new campaign ID next to the transaction link immediately after finalization.`;
+  const submitted = await submitProof(client, contractAddress, approvedTester.account, state, {
+    txKey: "remediationSubmitApprovedEvidence",
+    label: "V2.4.1 bound campaign creation evidence",
+    campaignId: BigInt(target.campaign_id),
+    stake: gen(0.01),
+    transactionUrl: txUrl(evidenceHash),
+    outcomeUrl: REMEDIATION_OUTCOME_URL,
+    feedback
+  });
+  const usage = await read(client, contractAddress, "get_evidence_usage", [
+    submitted.submission.transaction_url,
+    submitted.submission.app_result_url
+  ]);
+  if (usage.available || Number(usage.transaction_submission_id) !== Number(submitted.submission.submission_id)) {
+    throw new Error("Fresh remediation evidence was not consumed by the accepted submission");
+  }
+  if (submitted.submission.reservation_status !== "RESERVED") {
+    throw new Error("Fresh remediation submission did not reserve reward capacity");
+  }
+
+  const reviewed = await reviewSubmission(
+    client,
+    contractAddress,
+    sponsor.account,
+    state,
+    BigInt(submitted.submission.submission_id),
+    "V2.4.1 bound campaign creation evidence",
+    "remediationReviewApprovedEvidence"
+  );
+  assertVerifiedReviewReceipt(reviewed.receipt, contractAddress, "Remediation approved review");
+  if (reviewed.submission.status !== "APPROVED" || reviewed.submission.reservation_status !== "CONSUMED") {
+    throw new Error(`Fresh remediation evidence did not settle APPROVED: ${reviewed.submission.status}`);
+  }
+  console.log("V2.4.1 remediation evidence reached finalized GenLayer consensus");
+  console.log(JSON.stringify({ submission: reviewed.submission, receipt: reviewed.receipt }, null, 2));
+}
+
 function assertV4Report(submission, label, expectedValidationMethod) {
   const requiredTextFields = [
     "rubric_version",
@@ -608,7 +748,7 @@ function assertV4Report(submission, label, expectedValidationMethod) {
       throw new Error(`${label} is missing detailed report field ${field}`);
     }
   }
-  if (submission.rubric_version !== "VERDICTPROOF_V2_4_1") {
+  if (submission.rubric_version !== "VERDICTPROOF_V2_4_2") {
     throw new Error(`${label} used unexpected rubric ${submission.rubric_version}`);
   }
   if (submission.validation_method !== expectedValidationMethod) {
@@ -691,13 +831,13 @@ async function main() {
     state = { contractAddress, transactions: {} };
   }
   saveVerificationState(state);
-  const deploymentReceipt = await waitExecuted(client, DEPLOYMENT_TX, "VerdictProof V2.4.1 deployment");
+  const deploymentReceipt = await waitExecuted(client, DEPLOYMENT_TX, "VerdictProof V2.4.2 deployment");
   const deploymentFinalizationEvmTx = await finalizeWhenReady(
     client,
     sponsor.account,
     DEPLOYMENT_TX,
     contractAddress,
-    "VerdictProof V2.4.1 deployment"
+    "VerdictProof V2.4.2 deployment"
   );
   const deploymentVerification = await verifyDeploymentMatchesLocal(client, contractAddress);
   const primary = await createCampaign(client, contractAddress, sponsor.account, state, {
@@ -763,7 +903,7 @@ async function main() {
   const checkpointedPrimarySubmissions = 1
     + Number(Boolean(state.transactions.submitRejectedEvidence))
     + Number(Boolean(state.transactions.submitSemanticRejection));
-  await assertCampaignAccounting(
+  const primaryAfterDuplicate = await assertCampaignAccounting(
     client,
     contractAddress,
     primaryId,
@@ -1076,7 +1216,14 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
 }
 
-main().catch((error) => {
+const command = process.argv[2] ?? "full";
+const selectedMain = command === "remediation-prepare"
+  ? prepareRemediationEvidence
+  : command === "remediation-review"
+    ? submitAndReviewRemediationEvidence
+    : main;
+
+selectedMain().catch((error) => {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 });
