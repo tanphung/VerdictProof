@@ -22,13 +22,13 @@ MAX_URL_CHARS=500
 MAX_TEXT_CHARS=2400
 MAX_REASON_CHARS=260
 MAX_REVIEW_DETAIL_CHARS=420
-MAX_RENDER_CHARS=1200
+MAX_RENDER_CHARS=700
 MAX_RAW_CALLDATA_HEX_CHARS=20000
 MAX_TASK_IDENTIFIER_CHARS=120
-MAX_PROMPT_TASK_CHARS=600
-MAX_PROMPT_PROOF_CHARS=600
-MAX_PROMPT_FEEDBACK_CHARS=1000
-RUBRIC_VERSION='VERDICTPROOF_V2_4_2'
+MAX_PROMPT_TASK_CHARS=400
+MAX_PROMPT_PROOF_CHARS=400
+MAX_PROMPT_FEEDBACK_CHARS=700
+RUBRIC_VERSION='VERDICTPROOF_V2_4_3'
 VALIDATION_METHOD='INDEPENDENT_COMPARATIVE'
 HARD_GATE_VALIDATION_METHOD='INDEPENDENT_HARD_GATE_FEEDBACK'
 CONSENSUS_CHECKS='EXACT_EVIDENCE_GATES|EXACT_APPROVAL|DETERMINISTIC_PROOF|VALID_TOTAL_DELTA_12|VALID_FEEDBACK_DELTA_5|VALID_INSIGHT_DELTA_4|VALID_ORIGINALITY_DELTA_3|INVALID_TOTAL_DELTA_24|INVALID_FEEDBACK_DELTA_10|INVALID_INSIGHT_DELTA_8|INVALID_ORIGINALITY_DELTA_6'
@@ -72,13 +72,34 @@ def _clean_json(raw:typing.Any):
 	if first<0 or last<first:raise gl.vm.UserError(f"{ERR_LLM} no JSON object in LLM response")
 	try:return json.loads(text[first:last+1])
 	except Exception:raise gl.vm.UserError(f"{ERR_LLM} malformed JSON in LLM response")
+def _html_text(raw:typing.Any):
+	text=str(raw);lower=text.lower()
+	for tag in('style','script'):
+		while True:
+			start=lower.find('<'+tag)
+			if start<0:break
+			open_end=lower.find('>',start);close=lower.find('</'+tag+'>',open_end+1)
+			if open_end<0 or close<0:text=text[:start];break
+			end=close+len(tag)+3;text=text[:start]+' '+text[end:];lower=text.lower()
+	plain=[];inside=False
+	for char in text:
+		if char=='<':inside=True;plain.append(' ')
+		elif char=='>':inside=False;plain.append(' ')
+		elif not inside:plain.append(char)
+	return' '.join(''.join(plain).split())
 def _render_text(url:str):
-	try:text=gl.nondet.web.render(url,mode='text',wait_after_loaded='1s')
+	try:
+		response=gl.nondet.web.get(url);status_code=int(getattr(response,'status_code',getattr(response,'status',0)))
+		if 400<=status_code<500:raise gl.vm.UserError(f"{ERR_EXTERNAL} outcome page returned HTTP {status_code}")
+		if status_code>=500 or status_code<200:raise gl.vm.UserError(f"{ERR_TRANSIENT} outcome page temporarily unavailable")
+		text=response.body
+		if isinstance(text,bytes):text=text.decode('utf-8')
 	except Exception as exc:
+		if isinstance(exc,gl.vm.UserError):raise
 		message=str(exc).lower()
-		if any(str(code)in message for code in range(400,500)):raise gl.vm.UserError(f"{ERR_EXTERNAL} outcome page could not be rendered")
-		raise gl.vm.UserError(f"{ERR_TRANSIENT} outcome page render temporarily failed")
-	return _clean_text(text,MAX_RENDER_CHARS)
+		if any(str(code)in message for code in range(400,500)):raise gl.vm.UserError(f"{ERR_EXTERNAL} outcome page could not be fetched")
+		raise gl.vm.UserError(f"{ERR_TRANSIENT} outcome page fetch temporarily failed")
+	return _clean_text(_html_text(text),MAX_RENDER_CHARS)
 def _extract_bradbury_tx_hash(url:str):
 	if not isinstance(url,str)or not url.startswith(BRADBURY_EXPLORER_TX_PREFIX):return''
 	tx_hash=url[len(BRADBURY_EXPLORER_TX_PREFIX):].split('?',1)[0].split('#',1)[0]

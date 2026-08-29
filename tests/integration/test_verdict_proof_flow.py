@@ -28,6 +28,8 @@ EXPECTED_TASK_IDENTIFIER = "https://explorer-bradbury.genlayer.com/tx/0x6b342ffe
 
 
 def consensus_return(receipt):
+    if not str(receipt["status_name"]).upper().endswith("ACCEPTED"):
+        print("NON_ACCEPTED_CONSENSUS_RECEIPT", json.dumps(receipt, default=str, indent=2))
     assert str(receipt["status_name"]).upper().endswith("ACCEPTED")
     assert str(receipt["result_name"]).upper().endswith("AGREE")
     round_data = receipt.get("last_round") or {}
@@ -142,7 +144,7 @@ def test_full_semantic_and_hard_gate_consensus_flow():
     assert approved["reservation_status"] == "CONSUMED"
 
     for result in (identity, semantic_reject, approved):
-        assert result["rubric_version"] == "VERDICTPROOF_V2_4_2"
+        assert result["rubric_version"] == "VERDICTPROOF_V2_4_3"
         assert result["score"] == (
             result["proof_score"] + result["feedback_score"]
             + result["insight_score"] + result["originality_score"]

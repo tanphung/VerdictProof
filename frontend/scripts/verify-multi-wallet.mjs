@@ -268,7 +268,8 @@ async function waitExecuted(client, hash, label) {
     const consensusFailed = terminalLifecycle && resultName !== "AGREE";
     const lifecycleFailed = /UNDETERMINED|CANCELED/.test(statusName) ||
       (/TIMEOUT/.test(statusName) && rotationsLeft <= 0);
-    if (executionFailed || consensusFailed || lifecycleFailed) {
+    const executionTerminal = executionFailed && (terminalLifecycle || rotationsLeft <= 0);
+    if (executionTerminal || consensusFailed || lifecycleFailed) {
       throw new Error(`${label} failed: ${state}`);
     }
     if (terminalLifecycle && resultName === "AGREE" && executionResultName === "FINISHED_WITH_RETURN") {

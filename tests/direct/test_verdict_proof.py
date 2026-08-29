@@ -248,7 +248,7 @@ def pipeline_candidate(**report_overrides):
     report = review_candidate(
         proof_score=40,
         score=92,
-        rubric_version="VERDICTPROOF_V2_4_2",
+        rubric_version="VERDICTPROOF_V2_4_3",
         validation_method="INDEPENDENT_COMPARATIVE",
         **report_overrides,
     )
@@ -720,7 +720,7 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
     assert reviewed["usage_valid"] is True
     assert reviewed["proof_score"] == 40
     assert reviewed["reward_amount"] == str(REWARD)
-    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_4_2"
+    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_4_3"
     assert reviewed["validation_method"] == "INDEPENDENT_COMPARATIVE"
     assert reviewed["transaction_analysis"].startswith("Receipt ")
     assert "matches tester" in reviewed["identity_analysis"]
@@ -1092,6 +1092,56 @@ def test_evaluate_keeps_stake_pending_when_external_evidence_is_unavailable(dire
     direct_vm.value = 0
 
     with direct_vm.expect_revert("[TRANSIENT]"):
+        contract.evaluate_submission(sid)
+
+    assert contract.get_submission(sid)["status"] == "PENDING"
+    assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
+    assert contract.get_campaign(cid)["reserved_reward_pool"] == str(REWARD)
+
+
+def test_semantic_outcome_uses_lightweight_http_get_instead_of_browser_render():
+    source = Path(CONTRACT).read_text(encoding="utf-8")
+    assert "gl.nondet.web.get(url)" in source
+    assert "gl.nondet.web.render" not in source
+
+
+def test_outcome_html_normalization_prioritizes_visible_evidence(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    module = sys.modules[type(contract).__module__]
+    raw = "<html><head><style>body{color:red}</style><script>ignored()</script></head><body><h1>Campaign #2</h1><p>Finalized evidence is visible.</p></body></html>"
+    assert module._html_text(raw) == "Campaign #2 Finalized evidence is visible."
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_error"),
+    [
+        (404, "[EXTERNAL] outcome page returned HTTP 404"),
+        (503, "[TRANSIENT] outcome page temporarily unavailable"),
+    ],
+)
+def test_outcome_http_failure_keeps_reservation_pending(
+    direct_vm, direct_deploy, direct_alice, status, expected_error
+):
+    contract = direct_deploy(CONTRACT)
+    cid = create_demo_campaign(contract, direct_vm)
+    direct_vm.sender = direct_alice
+    direct_vm.value = STAKE
+    outcome_url = f"https://example.com/result/outcome-{status}"
+    sid = contract.submit_proof(
+        cid,
+        STAKE,
+        TX_URL,
+        outcome_url,
+        "I completed the campaign and documented its wallet, transaction, proof, reward, and settlement behavior.",
+    )
+    direct_vm.value = 0
+    mock_receipt(direct_vm, direct_alice)
+    direct_vm.mock_web(
+        rf"^https://example\.com/result/outcome-{status}$",
+        {"method": "GET", "status": status, "body": "unavailable"},
+    )
+
+    with direct_vm.expect_revert(expected_error):
         contract.evaluate_submission(sid)
 
     assert contract.get_submission(sid)["status"] == "PENDING"
