@@ -11,14 +11,14 @@
   </head>
   <body>
     <main>
-      <h1>Controlled public pilot evidence</h1>
-      <p>This lightweight page maps the pilot outcome to readable product context. The Bradbury receipt and finalized VerdictProof contract state remain authoritative.</p>
+      <h1>Verified submit_proof outcome for funded campaign #2</h1>
+      <p>The Bradbury transaction <strong>0xcd649f4254ff0e87a1540b7249f19f24d57e9b1196fd11e588568024c4db233a</strong> called <strong>submit_proof</strong> on VerdictProof. Its exact task-identifier value references finalized campaign-creation receipt <strong>0x6b342ffe43704b1790d09afd92701363f9107f0f82797a153ad7f92382674f3a</strong>. Together with finalized contract state, this proves that the tester submitted evidence for funded campaign #2.</p>
       <dl>
         <dt>Expected campaign</dt><dd>#2 — Verdict and Transaction Clarity Study</dd>
         <dt>Funded pool</dt><dd>0.10 GEN</dd>
-        <dt>Observed workflow</dt><dd>Wallet signing, finalized campaign creation, live campaign listing, proof submission, consensus verdict, and settlement explanation.</dd>
-        <dt>Evidence rule</dt><dd>The submitted create_campaign receipt sender must match the tester wallet and execution must be FINALIZED, AGREE, and FINISHED_WITH_RETURN.</dd>
-        <dt>Pilot status</dt><dd>Verify the exact campaign, sender, calldata, and settlement against the linked Bradbury transaction and VerdictProof contract.</dd>
+        <dt>Observed workflow</dt><dd>The tester submitted the finalized create_campaign receipt through submit_proof, linked the funded campaign outcome, and supplied product-specific feedback.</dd>
+        <dt>Evidence rule</dt><dd>The outer submit_proof receipt must be FINALIZED, AGREE, and FINISHED_WITH_RETURN; its sender, recipient, method, and exact task identifier must match the campaign binding.</dd>
+        <dt>Pilot status</dt><dd>Verify the submit_proof receipt, referenced campaign-creation receipt, campaign #2 state, tester wallet, and settlement directly on Bradbury.</dd>
       </dl>
     </main>
   </body>

@@ -31,8 +31,8 @@ MAX_PROMPT_FEEDBACK_CHARS=700
 RUBRIC_VERSION='VERDICTPROOF_V2_4_3'
 VALIDATION_METHOD='INDEPENDENT_COMPARATIVE'
 HARD_GATE_VALIDATION_METHOD='INDEPENDENT_HARD_GATE_FEEDBACK'
-CONSENSUS_CHECKS='EXACT_EVIDENCE_GATES|EXACT_APPROVAL|DETERMINISTIC_PROOF|VALID_TOTAL_DELTA_12|VALID_FEEDBACK_DELTA_5|VALID_INSIGHT_DELTA_4|VALID_ORIGINALITY_DELTA_3|INVALID_TOTAL_DELTA_24|INVALID_FEEDBACK_DELTA_10|INVALID_INSIGHT_DELTA_8|INVALID_ORIGINALITY_DELTA_6'
-HARD_GATE_CONSENSUS_CHECKS='FINALIZED_RECEIPT|EXACT_TRANSACTION_GATE|EXACT_IDENTITY_GATE|EXACT_RECIPIENT_GATE|EXACT_METHOD_GATE|EXACT_TASK_IDENTIFIER_GATE|FEEDBACK_DELTA_5|INSIGHT_DELTA_4|ORIGINALITY_DELTA_3'
+CONSENSUS_CHECKS='GATES_EXACT|APPROVAL_EXACT|PROOF_EXACT|VALID_DELTA_12_5_4_3|INVALID_DELTA_24_10_8_6'
+HARD_GATE_CONSENSUS_CHECKS='FINALIZED|TX_IDENTITY_BINDING_EXACT|FEEDBACK_DELTA_5_4_3'
 TOTAL_SCORE_TOLERANCE=12
 FEEDBACK_SCORE_TOLERANCE=5
 INSIGHT_SCORE_TOLERANCE=4
@@ -73,20 +73,16 @@ def _clean_json(raw:typing.Any):
 	try:return json.loads(text[first:last+1])
 	except Exception:raise gl.vm.UserError(f"{ERR_LLM} malformed JSON in LLM response")
 def _html_text(raw:typing.Any):
-	text=str(raw);lower=text.lower()
-	for tag in('style','script'):
-		while True:
-			start=lower.find('<'+tag)
-			if start<0:break
-			open_end=lower.find('>',start);close=lower.find('</'+tag+'>',open_end+1)
-			if open_end<0 or close<0:text=text[:start];break
-			end=close+len(tag)+3;text=text[:start]+' '+text[end:];lower=text.lower()
-	plain=[];inside=False
-	for char in text:
-		if char=='<':inside=True;plain.append(' ')
-		elif char=='>':inside=False;plain.append(' ')
-		elif not inside:plain.append(char)
-	return' '.join(''.join(plain).split())
+	t=str(raw);low=t.lower();start=low.find('<body')
+	if start>=0:
+		start=low.find('>',start);end=low.rfind('</body>')
+		if start>=0:t=t[start+1:end if end>start else len(t)]
+	out=[];tag=False
+	for ch in t:
+		if ch=='<':tag=True;out.append(' ')
+		elif ch=='>':tag=False;out.append(' ')
+		elif not tag:out.append(ch)
+	return' '.join(''.join(out).split())
 def _render_text(url:str):
 	try:
 		response=gl.nondet.web.get(url);status_code=int(getattr(response,'status_code',getattr(response,'status',0)))
@@ -94,11 +90,8 @@ def _render_text(url:str):
 		if status_code>=500 or status_code<200:raise gl.vm.UserError(f"{ERR_TRANSIENT} outcome page temporarily unavailable")
 		text=response.body
 		if isinstance(text,bytes):text=text.decode('utf-8')
-	except Exception as exc:
-		if isinstance(exc,gl.vm.UserError):raise
-		message=str(exc).lower()
-		if any(str(code)in message for code in range(400,500)):raise gl.vm.UserError(f"{ERR_EXTERNAL} outcome page could not be fetched")
-		raise gl.vm.UserError(f"{ERR_TRANSIENT} outcome page fetch temporarily failed")
+	except gl.vm.UserError:raise
+	except Exception:raise gl.vm.UserError(f"{ERR_TRANSIENT} outcome fetch failed")
 	return _clean_text(_html_text(text),MAX_RENDER_CHARS)
 def _extract_bradbury_tx_hash(url:str):
 	if not isinstance(url,str)or not url.startswith(BRADBURY_EXPLORER_TX_PREFIX):return''
@@ -271,7 +264,7 @@ def _normalize_review(raw:typing.Any,minimum_score:int):
 	if not recommendation:recommendation='Show task completion and one concrete product improvement.'
 	risk_flags=_clean_text(raw.get('risk_flags','NONE'),MAX_REASON_CHARS).upper()
 	if not risk_flags:risk_flags='NONE'
-	transaction_analysis=_clean_text(raw.get('transaction_analysis','Checked Bradbury lifecycle, consensus, and execution.'),MAX_REVIEW_DETAIL_CHARS);identity_analysis=_clean_text(raw.get('identity_analysis','Compared receipt sender with tester wallet.'),MAX_REVIEW_DETAIL_CHARS);task_analysis=_clean_text(raw.get('task_analysis','Compared task with receipt and rendered outcome.'),MAX_REVIEW_DETAIL_CHARS);proof_reason=_clean_text(raw.get('proof_reason','Proof reflects receipt, identity, and outcome.'),MAX_REVIEW_DETAIL_CHARS);feedback_reason=_clean_text(raw.get('feedback_reason','Feedback reflects product-specific evidence.'),MAX_REVIEW_DETAIL_CHARS);insight_reason=_clean_text(raw.get('insight_reason','Insight reflects actionable product value.'),MAX_REVIEW_DETAIL_CHARS);originality_reason=_clean_text(raw.get('originality_reason','Originality reflects non-generic observations.'),MAX_REVIEW_DETAIL_CHARS);settlement_explanation=_clean_text(raw.get('settlement_explanation','Approval unlocks stake plus reward; rejection adds stake to the pool.'),MAX_REVIEW_DETAIL_CHARS);return{'approved':approved,'score':score,'transaction_success':transaction_success,'identity_match':identity_match,'task_completed':task_completed,'usage_valid':usage_valid,'feedback_quality':quality,'proof_score':proof_score,'feedback_score':feedback_score,'insight_score':insight_score,'originality_score':originality_score,'reason_summary':reason,'evidence_summary':evidence,'improvement_recommendation':recommendation,'risk_flags':risk_flags,'rubric_version':RUBRIC_VERSION,'validation_method':VALIDATION_METHOD,'transaction_analysis':transaction_analysis,'identity_analysis':identity_analysis,'task_analysis':task_analysis,'proof_reason':proof_reason,'feedback_reason':feedback_reason,'insight_reason':insight_reason,'originality_reason':originality_reason,'consensus_checks':CONSENSUS_CHECKS,'settlement_explanation':settlement_explanation}
+	transaction_analysis=_clean_text(raw.get('transaction_analysis','Receipt lifecycle and execution checked.'),MAX_REVIEW_DETAIL_CHARS);identity_analysis=_clean_text(raw.get('identity_analysis','Receipt sender matched to tester.'),MAX_REVIEW_DETAIL_CHARS);task_analysis=_clean_text(raw.get('task_analysis','Task checked against receipt and outcome.'),MAX_REVIEW_DETAIL_CHARS);proof_reason=_clean_text(raw.get('proof_reason','Receipt and outcome support proof.'),MAX_REVIEW_DETAIL_CHARS);feedback_reason=_clean_text(raw.get('feedback_reason','Feedback is product-specific.'),MAX_REVIEW_DETAIL_CHARS);insight_reason=_clean_text(raw.get('insight_reason','Insight is actionable.'),MAX_REVIEW_DETAIL_CHARS);originality_reason=_clean_text(raw.get('originality_reason','Observation is workflow-specific.'),MAX_REVIEW_DETAIL_CHARS);settlement_explanation=_clean_text(raw.get('settlement_explanation','Settlement follows verdict.'),MAX_REVIEW_DETAIL_CHARS);return{'approved':approved,'score':score,'transaction_success':transaction_success,'identity_match':identity_match,'task_completed':task_completed,'usage_valid':usage_valid,'feedback_quality':quality,'proof_score':proof_score,'feedback_score':feedback_score,'insight_score':insight_score,'originality_score':originality_score,'reason_summary':reason,'evidence_summary':evidence,'improvement_recommendation':recommendation,'risk_flags':risk_flags,'rubric_version':RUBRIC_VERSION,'validation_method':VALIDATION_METHOD,'transaction_analysis':transaction_analysis,'identity_analysis':identity_analysis,'task_analysis':task_analysis,'proof_reason':proof_reason,'feedback_reason':feedback_reason,'insight_reason':insight_reason,'originality_reason':originality_reason,'consensus_checks':CONSENSUS_CHECKS,'settlement_explanation':settlement_explanation}
 def _reviews_equivalent(leader:typing.Any,validator:typing.Any,minimum_score:int):
 	if not isinstance(leader,dict)or not isinstance(validator,dict):return False
 	try:
@@ -410,7 +403,7 @@ class VerdictProof(gl.Contract):
 		if outcome_key in self.consumed_outcome_keys:raise gl.vm.UserError(f"{ERR_EXPECTED} outcome evidence has already been consumed")
 		reserved_reward=int(campaign.reward_per_approved)
 		if int(campaign.reward_pool)<reserved_reward:raise gl.vm.UserError(f"{ERR_EXPECTED} campaign has no unreserved reward capacity")
-		sid=self.next_submission_id;submission=Submission(submission_id=sid,campaign_id=campaign_id,tester=gl.message.sender_address,transaction_url=tx_url,app_result_url=result_url,feedback_text=feedback,stake_amount=campaign.stake_required,status=STATUS_PENDING,score=u256(0),approved=False,reward_amount=u256(0),reason_summary='Awaiting GenLayer AI review.',evidence_summary='GenLayer has not reviewed this proof yet.',improvement_recommendation='Run AI review after the tester submits all required proof links.',risk_flags='PENDING_REVIEW',claimed=False,transaction_success=False,identity_match=False,task_completed=False,usage_valid=False,feedback_quality='PENDING',proof_score=u256(0),feedback_score=u256(0),insight_score=u256(0),originality_score=u256(0),rubric_version=RUBRIC_VERSION,validation_method=VALIDATION_METHOD,transaction_analysis='Awaiting an official Bradbury receipt check.',identity_analysis='Awaiting sender-versus-tester verification.',task_analysis='Awaiting independent campaign task evaluation.',proof_reason='Awaiting comparative proof scoring.',feedback_reason='Awaiting comparative feedback scoring.',insight_reason='Awaiting comparative product insight scoring.',originality_reason='Awaiting comparative originality scoring.',consensus_checks=CONSENSUS_CHECKS,settlement_explanation='Tester stake and reserved campaign reward remain locked until comparative review settles.',evidence_transaction_hash=tx_hash,evidence_outcome_key=outcome_key,reserved_reward_amount=u256(reserved_reward),reservation_status='RESERVED',recipient_match=False,method_match=False,task_identifier_match=False,binding_analysis='Awaiting exact recipient, method, and task identifier verification.');self.submissions[sid]=submission;self.consumed_transaction_hashes[tx_hash]=sid;self.consumed_outcome_keys[outcome_key]=sid;self.campaign_submissions.get_or_insert_default(campaign_id).append(sid);tester_key=gl.message.sender_address.as_hex.lower();self.tester_submissions.get_or_insert_default(tester_key).append(sid);campaign.submission_count=u256(int(campaign.submission_count)+1);campaign.reward_pool=u256(int(campaign.reward_pool)-reserved_reward);campaign.reserved_reward_pool=u256(int(campaign.reserved_reward_pool)+reserved_reward);self.next_submission_id=u256(int(self.next_submission_id)+1);return sid
+		sid=self.next_submission_id;submission=Submission(submission_id=sid,campaign_id=campaign_id,tester=gl.message.sender_address,transaction_url=tx_url,app_result_url=result_url,feedback_text=feedback,stake_amount=campaign.stake_required,status=STATUS_PENDING,score=u256(0),approved=False,reward_amount=u256(0),reason_summary='Pending GenLayer review.',evidence_summary='Pending evidence review.',improvement_recommendation='Run review after proof submission.',risk_flags='PENDING_REVIEW',claimed=False,transaction_success=False,identity_match=False,task_completed=False,usage_valid=False,feedback_quality='PENDING',proof_score=u256(0),feedback_score=u256(0),insight_score=u256(0),originality_score=u256(0),rubric_version=RUBRIC_VERSION,validation_method=VALIDATION_METHOD,transaction_analysis='Pending receipt check.',identity_analysis='Pending identity check.',task_analysis='Pending task check.',proof_reason='Pending proof score.',feedback_reason='Pending feedback score.',insight_reason='Pending insight score.',originality_reason='Pending originality score.',consensus_checks=CONSENSUS_CHECKS,settlement_explanation='Stake and reward reserved pending review.',evidence_transaction_hash=tx_hash,evidence_outcome_key=outcome_key,reserved_reward_amount=u256(reserved_reward),reservation_status='RESERVED',recipient_match=False,method_match=False,task_identifier_match=False,binding_analysis='Pending exact binding check.');self.submissions[sid]=submission;self.consumed_transaction_hashes[tx_hash]=sid;self.consumed_outcome_keys[outcome_key]=sid;self.campaign_submissions.get_or_insert_default(campaign_id).append(sid);tester_key=gl.message.sender_address.as_hex.lower();self.tester_submissions.get_or_insert_default(tester_key).append(sid);campaign.submission_count=u256(int(campaign.submission_count)+1);campaign.reward_pool=u256(int(campaign.reward_pool)-reserved_reward);campaign.reserved_reward_pool=u256(int(campaign.reserved_reward_pool)+reserved_reward);self.next_submission_id=u256(int(self.next_submission_id)+1);return sid
 	@gl.public.write
 	def evaluate_submission(self,submission_id:u256)->dict:
 		if submission_id not in self.submissions:raise gl.vm.UserError(f"{ERR_EXPECTED} submission not found")

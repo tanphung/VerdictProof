@@ -729,7 +729,7 @@ def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice)
     assert reviewed["feedback_reason"].startswith("Feedback names")
     assert reviewed["insight_reason"].startswith("The recommendation")
     assert reviewed["originality_reason"].startswith("The observation")
-    assert "VALID_TOTAL_DELTA_12" in reviewed["consensus_checks"]
+    assert "VALID_DELTA_12_5_4_3" in reviewed["consensus_checks"]
     assert reviewed["settlement_explanation"].startswith("The reward reserved")
     assert reviewed["recipient_match"] is True
     assert reviewed["method_match"] is True
