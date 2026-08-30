@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   CircleDollarSign,
   ClipboardCheck,
+  Clock3,
   ExternalLink,
   Eye,
   FileSearch,
@@ -60,14 +61,36 @@ const defaultCampaignForm: CampaignForm = {
   rewardPerApproved: "0.01",
   stakeRequired: "0.01",
   minimumScore: "75",
-  expectedRecipient: "",
-  expectedMethod: "",
-  expectedTaskIdentifier: ""
+  submissionDeadline: "",
+  obligations: [
+    { id: "OBL-001", text: "Complete the configured product task." },
+    { id: "OBL-002", text: "Document the resulting product state." }
+  ],
+  githubOwner: "tanphung",
+  githubRepository: "VerdictProof",
+  artifactPath: "evidence/result.md",
+  artifactContentType: "text/markdown",
+  sourceContract: "",
+  method: "",
+  taskIdentifierSelector: "kwargs.task_identifier",
+  taskIdentifierValue: "",
+  dealSelector: "kwargs.deal_id",
+  dealValue: "",
+  recipientSelector: "kwargs.recipient",
+  recipientValue: "",
+  amountSelector: "kwargs.amount_atto",
+  amountAtto: "",
+  kindSelector: "kwargs.kind",
+  kindValue: "RELEASE",
+  releasedSelector: "kwargs.released",
+  releasedValue: true
 };
 
 const defaultProofForm: ProofForm = {
   transactionUrl: "",
-  appResultUrl: "",
+  commitSha: "",
+  artifactSha256: "",
+  artifactByteLength: "",
   feedbackText: ""
 };
 
@@ -89,27 +112,44 @@ type ChainCampaign = {
   submission_count: number | string | bigint;
   approved_count: number | string | bigint;
   rejected_count: number | string | bigint;
-  expected_recipient: string;
-  expected_method: string;
-  expected_task_identifier: string;
+  expired_count: number | string | bigint;
   reserved_reward_pool: string | number | bigint;
   available_reward_slots: number | string | bigint;
+  revision: number | string | bigint;
+  submission_deadline: number | string | bigint;
+  review_timeout_seconds: number | string | bigint;
+  obligations: Campaign["obligations"];
+  artifact_policy: Campaign["artifactPolicy"];
+  receipt_policy: Campaign["receiptPolicy"];
+  repository_identity: Campaign["repositoryIdentity"];
+  close_settlement: Campaign["closeSettlement"];
+  rubric_version: string;
 };
 
 type ChainSubmission = {
   submission_id: number | string | bigint;
   campaign_id: number | string | bigint;
+  campaign_revision: number | string | bigint;
   tester: string;
   transaction_url: string;
-  app_result_url: string;
   feedback_text: string;
   stake_amount: string | number | bigint;
   status: string;
   score: number | string | bigint;
   approved: boolean;
   reward_amount: string | number | bigint;
-  transaction_success?: boolean;
-  identity_match?: boolean;
+  submitted_at: number | string | bigint;
+  review_deadline: number | string | bigint;
+  commit_sha: string;
+  artifact_key: string;
+  provenance_manifest: Submission["provenanceManifest"];
+  artifact_sha256: string;
+  artifact_byte_length: number | string | bigint;
+  total_chunks: number | string | bigint;
+  chunk_digests: string[];
+  receipt_checks: Submission["receiptChecks"];
+  obligation_assessments: Submission["obligationAssessments"];
+  reviewed_chunks: number[];
   task_completed?: boolean;
   usage_valid?: boolean;
   proof_score?: number | string | bigint;
@@ -122,8 +162,6 @@ type ChainSubmission = {
   risk_flags?: string;
   rubric_version?: string;
   validation_method?: string;
-  transaction_analysis?: string;
-  identity_analysis?: string;
   task_analysis?: string;
   proof_reason?: string;
   feedback_reason?: string;
@@ -132,21 +170,17 @@ type ChainSubmission = {
   consensus_checks?: string;
   settlement_explanation?: string;
   evidence_transaction_hash?: string;
-  evidence_outcome_key?: string;
   reserved_reward_amount?: string | number | bigint;
   reservation_status?: string;
-  recipient_match?: boolean;
-  method_match?: boolean;
-  task_identifier_match?: boolean;
-  binding_analysis?: string;
+  settlement_record: Submission["settlementRecord"];
   claimed: boolean;
 };
 
 type ChainEvidenceUsage = {
   transaction_hash: string;
-  outcome_key: string;
+  artifact_key: string;
   transaction_submission_id: number | string | bigint;
-  outcome_submission_id: number | string | bigint;
+  artifact_submission_id: number | string | bigint;
   available: boolean;
 };
 
@@ -164,11 +198,14 @@ function asCampaignStatus(value: string): Campaign["status"] {
 }
 
 function asSubmissionStatus(value: string): SubmissionStatus {
-  if (value === "APPROVED" || value === "REJECTED" || value === "CLAIMED") return value;
+  if (value === "APPROVED" || value === "REJECTED" || value === "CLAIMED" || value === "EXPIRED") return value;
   return "PENDING";
 }
 
 function validationMethodLabel(method: string) {
+  if (method === "INDEPENDENT_FULL_ARTIFACT_COMPARATIVE") {
+    return "Independent full-artifact comparative validation";
+  }
   if (method === "INDEPENDENT_HARD_GATE_FEEDBACK") {
     return "Independent hard-gate + comparative feedback";
   }
@@ -179,13 +216,12 @@ function validationMethodLabel(method: string) {
 }
 
 const ONCHAIN_REPORT_FIELDS: Array<[keyof Submission, string]> = [
+  ["reasonSummary", "reason_summary"],
   ["evidenceSummary", "evidence_summary"],
   ["improvementRecommendation", "improvement_recommendation"],
   ["riskFlags", "risk_flags"],
   ["rubricVersion", "rubric_version"],
   ["validationMethod", "validation_method"],
-  ["transactionAnalysis", "transaction_analysis"],
-  ["identityAnalysis", "identity_analysis"],
   ["taskAnalysis", "task_analysis"],
   ["proofReason", "proof_reason"],
   ["feedbackReason", "feedback_reason"],
@@ -193,14 +229,26 @@ const ONCHAIN_REPORT_FIELDS: Array<[keyof Submission, string]> = [
   ["originalityReason", "originality_reason"],
   ["consensusChecks", "consensus_checks"],
   ["settlementExplanation", "settlement_explanation"],
-  ["bindingAnalysis", "binding_analysis"],
   ["evidenceTransactionHash", "evidence_transaction_hash"],
-  ["evidenceOutcomeKey", "evidence_outcome_key"],
+  ["artifactKey", "artifact_key"],
+  ["artifactSha256", "artifact_sha256"],
   ["reservationStatus", "reservation_status"]
 ];
 
 function missingOnchainReportFields(submission: Submission) {
-  return ONCHAIN_REPORT_FIELDS.filter(([field]) => !String(submission[field] ?? "").trim()).map(([, label]) => label);
+  const missing = ONCHAIN_REPORT_FIELDS.filter(([field]) => !String(submission[field] ?? "").trim()).map(([, label]) => label);
+  if (Object.keys(submission.provenanceManifest).length === 0) missing.push("provenance_manifest");
+  if (submission.artifactByteLength <= 0) missing.push("artifact_byte_length");
+  if (submission.totalChunks <= 0) missing.push("total_chunks");
+  if (submission.chunkDigests.length !== submission.totalChunks) missing.push("chunk_digests");
+  if (Object.keys(submission.receiptChecks).length === 0) missing.push("receipt_checks");
+  if (submission.obligationAssessments.length === 0) missing.push("obligation_assessments");
+  if (
+    submission.reviewedChunks.length !== submission.totalChunks ||
+    submission.reviewedChunks.some((chunk, index) => chunk !== index)
+  ) missing.push("reviewed_chunks");
+  if (Object.keys(submission.settlementRecord).length === 0) missing.push("settlement_record");
+  return missing;
 }
 
 function normalizeCampaign(item: ChainCampaign): Campaign {
@@ -219,30 +267,55 @@ function normalizeCampaign(item: ChainCampaign): Campaign {
     submissionCount: toNumber(item.submission_count),
     approvedCount: toNumber(item.approved_count),
     rejectedCount: toNumber(item.rejected_count),
-    expectedRecipient: item.expected_recipient,
-    expectedMethod: item.expected_method,
-    expectedTaskIdentifier: item.expected_task_identifier,
+    expiredCount: toNumber(item.expired_count),
     reservedRewardPool: toBigInt(item.reserved_reward_pool),
-    availableRewardSlots: toNumber(item.available_reward_slots)
+    availableRewardSlots: toNumber(item.available_reward_slots),
+    revision: toNumber(item.revision),
+    submissionDeadline: toNumber(item.submission_deadline),
+    reviewTimeoutSeconds: toNumber(item.review_timeout_seconds),
+    obligations: item.obligations,
+    artifactPolicy: item.artifact_policy,
+    receiptPolicy: item.receipt_policy,
+    repositoryIdentity: item.repository_identity,
+    closeSettlement: item.close_settlement,
+    rubricVersion: item.rubric_version,
+    expectedSourceContract: item.receipt_policy.source_contract,
+    expectedMethod: item.receipt_policy.method,
+    expectedTaskIdentifier: String(item.receipt_policy.task_identifier.value)
   };
 }
 
-function normalizeSubmission(item: ChainSubmission, campaignTitle = "Live campaign"): Submission {
+function normalizeSubmission(item: ChainSubmission, campaign?: Campaign): Submission {
   return {
     submissionId: toNumber(item.submission_id),
     campaignId: toNumber(item.campaign_id),
-    campaignTitle,
+    campaignRevision: toNumber(item.campaign_revision),
+    campaignTitle: campaign?.title ?? "Live campaign",
     tester: item.tester,
     transactionUrl: item.transaction_url,
-    appResultUrl: item.app_result_url,
     feedbackText: item.feedback_text,
     stakeAmount: toBigInt(item.stake_amount),
     status: asSubmissionStatus(item.status),
     score: toNumber(item.score),
     approved: Boolean(item.approved),
     rewardAmount: toBigInt(item.reward_amount),
-    transactionSuccess: Boolean(item.transaction_success),
-    identityMatch: Boolean(item.identity_match),
+    submittedAt: toNumber(item.submitted_at),
+    reviewDeadline: toNumber(item.review_deadline),
+    commitSha: item.commit_sha,
+    artifactKey: item.artifact_key,
+    artifactUrl: campaign
+      ? `https://github.com/${campaign.artifactPolicy.owner}/${campaign.artifactPolicy.repository}/blob/${item.commit_sha}/${campaign.artifactPolicy.path}`
+      : "",
+    provenanceManifest: item.provenance_manifest,
+    artifactSha256: item.artifact_sha256,
+    artifactByteLength: toNumber(item.artifact_byte_length),
+    totalChunks: toNumber(item.total_chunks),
+    chunkDigests: item.chunk_digests,
+    receiptChecks: item.receipt_checks,
+    obligationAssessments: item.obligation_assessments,
+    reviewedChunks: item.reviewed_chunks,
+    transactionSuccess: Boolean(item.receipt_checks?.finalized_success),
+    identityMatch: Boolean(item.receipt_checks?.sender_match),
     taskCompleted: Boolean(item.task_completed),
     usageValid: Boolean(item.usage_valid),
     proofScore: toNumber(item.proof_score ?? 0),
@@ -255,8 +328,6 @@ function normalizeSubmission(item: ChainSubmission, campaignTitle = "Live campai
     riskFlags: item.risk_flags ?? "",
     rubricVersion: item.rubric_version ?? "",
     validationMethod: item.validation_method ?? "",
-    transactionAnalysis: item.transaction_analysis ?? "",
-    identityAnalysis: item.identity_analysis ?? "",
     taskAnalysis: item.task_analysis ?? "",
     proofReason: item.proof_reason ?? "",
     feedbackReason: item.feedback_reason ?? "",
@@ -264,18 +335,17 @@ function normalizeSubmission(item: ChainSubmission, campaignTitle = "Live campai
     originalityReason: item.originality_reason ?? "",
     consensusChecks: item.consensus_checks ?? "",
     settlementExplanation: item.settlement_explanation ?? "",
+    settlementRecord: item.settlement_record ?? {},
     evidenceTransactionHash: item.evidence_transaction_hash ?? "",
-    evidenceOutcomeKey: item.evidence_outcome_key ?? "",
     reservedRewardAmount: toBigInt(item.reserved_reward_amount ?? 0),
     reservationStatus: (
       item.reservation_status === "CONSUMED" || item.reservation_status === "RELEASED"
         ? item.reservation_status
         : "RESERVED"
     ),
-    recipientMatch: Boolean(item.recipient_match),
-    methodMatch: Boolean(item.method_match),
-    taskIdentifierMatch: Boolean(item.task_identifier_match),
-    bindingAnalysis: item.binding_analysis ?? "",
+    sourceContractMatch: Boolean(item.receipt_checks?.source_contract_match),
+    methodMatch: Boolean(item.receipt_checks?.method_match),
+    taskIdentifierMatch: Boolean(item.receipt_checks?.task_identifier_match),
     claimed: Boolean(item.claimed)
   };
 }
@@ -344,7 +414,7 @@ type ActiveTx = {
   status: TxStatus | null;
   error?: string;
   createdAt: number;
-  action?: "create" | "submit" | "review" | "claim" | "close";
+  action?: "create" | "submit" | "review" | "expire" | "claim" | "close";
   submissionId?: number;
   campaignId?: number;
 };
@@ -678,7 +748,7 @@ function App() {
               const result = await readContract<{ submissions: ChainSubmission[] }>("list_campaign_submissions", [
                 BigInt(campaign.campaignId)
               ]);
-              return (result.submissions ?? []).map((submission) => normalizeSubmission(submission, campaign.title));
+              return (result.submissions ?? []).map((submission) => normalizeSubmission(submission, campaign));
             })
           )
         ).flat();
@@ -990,6 +1060,32 @@ function App() {
     const pool = parseGen(campaignForm.rewardPool);
     const reward = parseGen(campaignForm.rewardPerApproved);
     const stake = parseGen(campaignForm.stakeRequired);
+    const submissionDeadline = campaignForm.submissionDeadline
+      ? Math.floor(new Date(campaignForm.submissionDeadline).getTime() / 1000)
+      : Math.floor(Date.now() / 1000) + 7 * 86400;
+    const policy = {
+      schema: "VERDICTPROOF_POLICY_V1",
+      submission_deadline: submissionDeadline,
+      obligations: campaignForm.obligations.filter((item) => item.id.trim() && item.text.trim()),
+      artifact: {
+        provider: "GITHUB",
+        auth_mode: "GITHUB_API",
+        owner: campaignForm.githubOwner,
+        repository: campaignForm.githubRepository,
+        path: campaignForm.artifactPath,
+        content_type: campaignForm.artifactContentType
+      },
+      receipt: {
+        source_contract: campaignForm.sourceContract,
+        method: campaignForm.method,
+        task_identifier: { selector: campaignForm.taskIdentifierSelector, value: campaignForm.taskIdentifierValue },
+        deal: { selector: campaignForm.dealSelector, value: campaignForm.dealValue },
+        recipient: { selector: campaignForm.recipientSelector, value: campaignForm.recipientValue },
+        amount_atto: { selector: campaignForm.amountSelector, value: campaignForm.amountAtto },
+        kind: { selector: campaignForm.kindSelector, value: campaignForm.kindValue },
+        released: { selector: campaignForm.releasedSelector, value: campaignForm.releasedValue }
+      }
+    };
 
     setBusy("create");
     try {
@@ -1009,9 +1105,7 @@ function App() {
               reward,
               stake,
               BigInt(campaignForm.minimumScore),
-              campaignForm.expectedRecipient,
-              campaignForm.expectedMethod,
-              campaignForm.expectedTaskIdentifier
+              JSON.stringify(policy)
             ],
             pool
           ),
@@ -1043,11 +1137,12 @@ function App() {
         throw new Error("This campaign has no unreserved reward capacity for another submission.");
       }
       const usage = await readContract<ChainEvidenceUsage>("get_evidence_usage", [
+        BigInt(selectedCampaign.campaignId),
         proofForm.transactionUrl,
-        proofForm.appResultUrl
+        proofForm.commitSha
       ]);
       if (!usage.available) {
-        const consumedBy = toNumber(usage.transaction_submission_id || usage.outcome_submission_id || 0);
+        const consumedBy = toNumber(usage.transaction_submission_id || usage.artifact_submission_id || 0);
         throw new Error(
           consumedBy > 0
             ? `This evidence reference was already consumed by Submission #${consumedBy}.`
@@ -1065,7 +1160,9 @@ function App() {
               BigInt(selectedCampaign.campaignId),
               selectedCampaign.stakeRequired,
               proofForm.transactionUrl,
-              proofForm.appResultUrl,
+              proofForm.commitSha,
+              proofForm.artifactSha256,
+              BigInt(proofForm.artifactByteLength),
               proofForm.feedbackText
             ],
             selectedCampaign.stakeRequired
@@ -1098,6 +1195,28 @@ function App() {
       );
     } catch (error) {
       setNotice(errorMessage(error, "AI review failed."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function expireSubmission(submission: Submission) {
+    if (!requireLiveWallet("expire this timed-out submission")) return;
+    setBusy(`expire-${submission.submissionId}`);
+    try {
+      await runLiveWrite(
+        "Expire submission",
+        "Open your wallet to release the reserved reward and refund the tester stake...",
+        (client) => writeContract(client, "expire_submission", [BigInt(submission.submissionId)]),
+        (state) =>
+          state.submissions.some(
+            (item) => item.submissionId === submission.submissionId && item.status === "EXPIRED"
+          ),
+        (hash) => `Expiry refund accepted on Bradbury: ${hash}`,
+        { action: "expire", submissionId: submission.submissionId, campaignId: submission.campaignId }
+      );
+    } catch (error) {
+      setNotice(errorMessage(error, "Expire submission failed."));
     } finally {
       setBusy(null);
     }
@@ -1307,6 +1426,7 @@ function App() {
               setProofForm={setProofForm}
               onSubmitProof={submitProof}
               onReview={reviewSubmission}
+              onExpire={expireSubmission}
               walletAddress={walletAddress}
               onRequestClose={setClosingCampaign}
               busy={busy}
@@ -1333,6 +1453,7 @@ function App() {
                   setProofForm={setProofForm}
                   onSubmitProof={submitProof}
                   onReview={reviewSubmission}
+                  onExpire={expireSubmission}
                   walletAddress={walletAddress}
                   onRequestClose={setClosingCampaign}
                   busy={busy}
@@ -1595,12 +1716,12 @@ function ReviewHistory({
                   <div className="verification-grid" aria-label="Verified on-chain evidence checks">
                     <VerificationFact
                       label="Transaction receipt"
-                      detail={submission.transactionAnalysis}
+                      detail={`finalized_success=${String(submission.receiptChecks.finalized_success ?? false)}`}
                       passed={submission.transactionSuccess}
                     />
                     <VerificationFact
                       label="Tester wallet ownership"
-                      detail={submission.identityAnalysis}
+                      detail={`sender_match=${String(submission.receiptChecks.sender_match ?? false)}`}
                       passed={submission.identityMatch}
                     />
                     <VerificationFact
@@ -1613,13 +1734,13 @@ function ReviewHistory({
                   <section className="evidence-binding-report" aria-label="Exact campaign evidence binding">
                     <div className="report-section-head">
                       <span className="panel-overline">Evidence binding</span>
-                      <h5>Decoded from finalized GenLayer calldata</h5>
+                      <h5>Exact facts returned by the Intelligent Contract</h5>
                     </div>
                     <div className="verification-grid">
                       <VerificationFact
-                        label="Expected recipient"
-                        detail={campaign?.expectedRecipient ?? "Campaign binding unavailable."}
-                        passed={submission.recipientMatch}
+                        label="Source contract"
+                        detail={campaign?.receiptPolicy.source_contract ?? "Campaign binding unavailable."}
+                        passed={submission.sourceContractMatch}
                       />
                       <VerificationFact
                         label="Expected method"
@@ -1628,11 +1749,80 @@ function ReviewHistory({
                       />
                       <VerificationFact
                         label="Exact task identifier"
-                        detail={campaign?.expectedTaskIdentifier ?? "Campaign binding unavailable."}
+                        detail={campaign ? `${campaign.receiptPolicy.task_identifier.selector} = ${String(campaign.receiptPolicy.task_identifier.value)}` : "Campaign binding unavailable."}
                         passed={submission.taskIdentifierMatch}
                       />
+                      <VerificationFact
+                        label="Exact deal"
+                        detail={campaign ? `${campaign.receiptPolicy.deal.selector} = ${String(campaign.receiptPolicy.deal.value)}` : "Campaign binding unavailable."}
+                        passed={Boolean(submission.receiptChecks.deal_match)}
+                      />
+                      <VerificationFact
+                        label="Exact recipient"
+                        detail={campaign ? `${campaign.receiptPolicy.recipient.selector} = ${String(campaign.receiptPolicy.recipient.value)}` : "Campaign binding unavailable."}
+                        passed={Boolean(submission.receiptChecks.recipient_match)}
+                      />
+                      <VerificationFact
+                        label="Exact amount (attoGEN)"
+                        detail={campaign ? `${campaign.receiptPolicy.amount_atto.selector} = ${String(campaign.receiptPolicy.amount_atto.value)}` : "Campaign binding unavailable."}
+                        passed={Boolean(submission.receiptChecks.amount_atto_match)}
+                      />
+                      <VerificationFact
+                        label="Settlement kind"
+                        detail={campaign ? `${campaign.receiptPolicy.kind.selector} = ${String(campaign.receiptPolicy.kind.value)}` : "Campaign binding unavailable."}
+                        passed={Boolean(submission.receiptChecks.kind_match)}
+                      />
+                      <VerificationFact
+                        label="Released state"
+                        detail={campaign ? `${campaign.receiptPolicy.released.selector} = ${String(campaign.receiptPolicy.released.value)}` : "Campaign binding unavailable."}
+                        passed={Boolean(submission.receiptChecks.released_match)}
+                      />
                     </div>
-                    {submission.bindingAnalysis ? <p>{submission.bindingAnalysis}</p> : null}
+                    <div className="review-detail-grid">
+                      {Object.entries(submission.receiptChecks).map(([name, passed]) => (
+                        <div key={name}><span>{name.split("_").join(" ")}</span><p>{String(passed)}</p></div>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="evidence-binding-report" aria-label="Authenticated artifact provenance">
+                    <div className="report-section-head">
+                      <span className="panel-overline">Authenticated provenance</span>
+                      <h5>{submission.provenanceManifest.canonical_origin}</h5>
+                    </div>
+                    <div className="review-detail-grid">
+                      <div><span>Repository identity</span><p>{submission.provenanceManifest.owner}/{submission.provenanceManifest.repository} · ID {submission.provenanceManifest.repository_id}</p></div>
+                      <div><span>Immutable version</span><p>{submission.commitSha}</p></div>
+                      <div><span>Full SHA-256</span><p>{submission.artifactSha256}</p></div>
+                      <div><span>Artifact</span><p>{submission.artifactByteLength} bytes · {submission.provenanceManifest.content_type}</p></div>
+                    </div>
+                  </section>
+
+                  <section className="evidence-binding-report" aria-label="Complete artifact chunk review">
+                    <div className="report-section-head">
+                      <span className="panel-overline">Full-artifact coverage</span>
+                      <h5>{submission.reviewedChunks.length}/{submission.totalChunks} chunks reviewed</h5>
+                    </div>
+                    <div className="review-detail-grid">
+                      {submission.chunkDigests.map((digest, index) => (
+                        <div key={digest}><span>Chunk {index}</span><p>{digest}</p></div>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="evidence-binding-report" aria-label="Obligation assessments">
+                    <div className="report-section-head">
+                      <span className="panel-overline">Every accepted obligation</span>
+                      <h5>{submission.obligationAssessments.length} contract-recorded assessments</h5>
+                    </div>
+                    <div className="review-detail-grid">
+                      {submission.obligationAssessments.map((assessment) => (
+                        <div key={assessment.obligation_id}>
+                          <span>{assessment.obligation_id} · {assessment.verdict}</span>
+                          <p>{assessment.reason_code} · {assessment.evidence_id} chunks {assessment.chunk_citations.join(", ")}</p>
+                        </div>
+                      ))}
+                    </div>
                   </section>
 
                   <div className="rubric-grid detailed-rubric" aria-label="GenLayer review score breakdown">
@@ -1650,13 +1840,13 @@ function ReviewHistory({
                       title="Open submitted transaction evidence"
                       external
                     />
-                    <LinkChip
-                      href={submission.appResultUrl}
-                      label="Outcome evidence"
-                      detail={compactUrlLabel(submission.appResultUrl)}
-                      title="Open submitted outcome evidence"
+                    {submission.artifactUrl ? <LinkChip
+                      href={submission.artifactUrl}
+                      label="Immutable GitHub artifact"
+                      detail={submission.commitSha.slice(0, 12)}
+                      title="Open authenticated artifact at its immutable commit"
                       external
-                    />
+                    /> : null}
                   </section>
 
                   <div className="review-detail-grid">
@@ -1674,7 +1864,11 @@ function ReviewHistory({
                     </div> : null}
                     <div>
                       <span>Consumed evidence references</span>
-                      <p>{submission.evidenceTransactionHash} · {submission.evidenceOutcomeKey}</p>
+                      <p>{submission.evidenceTransactionHash} · {submission.artifactKey}</p>
+                    </div>
+                    <div>
+                      <span>Settlement record</span>
+                      <p>{submission.settlementRecord.kind ?? "PENDING"} · recipient {submission.settlementRecord.recipient ?? "—"} · released {String(submission.settlementRecord.released ?? false)}</p>
                     </div>
                     {submission.riskFlags ? <div>
                       <span>Risk flags</span>
@@ -1774,7 +1968,7 @@ function CampaignCard({ campaign, selected, onOpen }: { campaign: Campaign; sele
         <Metric label="Open slots" value={String(campaign.availableRewardSlots)} />
       </div>
       <div className="campaign-binding-summary">
-        <span>{shortAddress(campaign.expectedRecipient)} · {campaign.expectedMethod}</span>
+        <span>{shortAddress(campaign.expectedSourceContract)} · {campaign.expectedMethod}</span>
         <small>{campaign.expectedTaskIdentifier}</small>
       </div>
       <div className="pool-rail" aria-label="Campaign reward pool progress">
@@ -1799,6 +1993,7 @@ function CampaignDetail({
   setProofForm,
   onSubmitProof,
   onReview,
+  onExpire,
   walletAddress,
   onRequestClose,
   busy
@@ -1809,6 +2004,7 @@ function CampaignDetail({
   setProofForm: (form: ProofForm) => void;
   onSubmitProof: (event: FormEvent) => void;
   onReview: (submission: Submission) => void;
+  onExpire: (submission: Submission) => void;
   walletAddress: string | null;
   onRequestClose: (campaign: Campaign) => void;
   busy: string | null;
@@ -1841,11 +2037,19 @@ function CampaignDetail({
           </div>
 
           <div className="campaign-binding-panel">
-            <strong>Exact evidence binding</strong>
-            <p><span>Recipient</span>{campaign.expectedRecipient}</p>
+            <strong>Full-assurance evidence policy</strong>
+            <p><span>Source contract</span>{campaign.expectedSourceContract}</p>
             <p><span>Method</span>{campaign.expectedMethod}</p>
             <p><span>Task identifier</span>{campaign.expectedTaskIdentifier}</p>
+            <p><span>Repository</span>{campaign.repositoryIdentity.full_name}</p>
+            <p><span>Artifact</span>{campaign.artifactPolicy.path} · {campaign.artifactPolicy.content_type}</p>
+            <p><span>Deadline</span>{new Date(campaign.submissionDeadline * 1000).toLocaleString()}</p>
           </div>
+
+          <details className="requirement-box" open>
+            <summary><ClipboardCheck size={18} /><span>Accepted obligations</span></summary>
+            {campaign.obligations.map((obligation) => <p key={obligation.id}><strong>{obligation.id}</strong> · {obligation.text}</p>)}
+          </details>
 
           <details className="requirement-box">
             <summary>
@@ -1886,14 +2090,23 @@ function CampaignDetail({
             />
           </label>
           <label>
-            Outcome evidence URL
+            Immutable Git commit SHA
             <input
               spellCheck={false}
               required
-              placeholder="https://public-result-or-contract.example/..."
-              value={proofForm.appResultUrl}
-              onChange={(event) => setProofForm({ ...proofForm, appResultUrl: event.target.value })}
+              pattern="[a-fA-F0-9]{40}"
+              placeholder="40-character commit SHA"
+              value={proofForm.commitSha}
+              onChange={(event) => setProofForm({ ...proofForm, commitSha: event.target.value })}
             />
+          </label>
+          <label>
+            Full artifact SHA-256
+            <input spellCheck={false} required pattern="[a-fA-F0-9]{64}" placeholder="64-character SHA-256" value={proofForm.artifactSha256} onChange={(event) => setProofForm({ ...proofForm, artifactSha256: event.target.value })} />
+          </label>
+          <label>
+            Artifact byte length
+            <input spellCheck={false} required type="number" min="1" max="4096" placeholder="1..4096" value={proofForm.artifactByteLength} onChange={(event) => setProofForm({ ...proofForm, artifactByteLength: event.target.value })} />
           </label>
           <label>
             Feedback text
@@ -1906,7 +2119,7 @@ function CampaignDetail({
             />
           </label>
           <p className="form-hint">
-            Evidence references are consumed once. Validators independently verify execution, wallet ownership, exact recipient/method/task binding, task completion, and feedback quality.
+            The contract constructs the GitHub API URL from campaign policy and commit. Validators refetch all bytes, recompute SHA-256 and every chunk digest, then assess every obligation exactly once.
           </p>
           <button className="primary-button full" type="submit" disabled={busy === "submit"}>
             {busy === "submit" ? <Loader2 className="spin" size={16} /> : <Banknote size={16} />}
@@ -1935,7 +2148,8 @@ function CampaignDetail({
               key={submission.submissionId}
               submission={submission}
               onReview={onReview}
-              busy={busy === `review-${submission.submissionId}`}
+              onExpire={onExpire}
+              busy={busy === `review-${submission.submissionId}` || busy === `expire-${submission.submissionId}`}
             />
           ))
         ) : (
@@ -1979,9 +2193,14 @@ function MySubmissions({
               <Metric label="Score" value={`${submission.score}/100`} />
               <Metric label="Reward" value={formatGen(submission.rewardAmount)} />
               <Metric
-                label={submission.status === "REJECTED" ? "Slashed" : "Total claim"}
+                label={
+                  submission.status === "REJECTED" ? "Slashed" :
+                  submission.status === "EXPIRED" ? "Refunded" :
+                  submission.status === "PENDING" ? "Locked" :
+                  submission.status === "CLAIMED" ? "Settled payout" : "Total claim"
+                }
                 value={
-                  submission.status === "REJECTED"
+                  submission.status === "REJECTED" || submission.status === "EXPIRED" || submission.status === "PENDING"
                     ? formatGen(submission.stakeAmount)
                     : formatGen(submission.stakeAmount + submission.rewardAmount)
                 }
@@ -2063,12 +2282,15 @@ function ReviewLifecycle() {
 function SubmissionRow({
   submission,
   onReview,
+  onExpire,
   busy
 }: {
   submission: Submission;
   onReview: (submission: Submission) => void;
+  onExpire: (submission: Submission) => void;
   busy: boolean;
 }) {
+  const canExpire = submission.status === "PENDING" && Math.floor(Date.now() / 1000) > submission.reviewDeadline;
   const stakeNote =
     submission.status === "PENDING"
       ? `Tester stake: ${formatGen(submission.stakeAmount)} locked in VerdictProof escrow until AI review finishes.`
@@ -2076,6 +2298,8 @@ function SubmissionRow({
         ? `${formatGen(submission.stakeAmount)} stake is unlocked with ${formatGen(submission.rewardAmount)} reward available to claim.`
         : submission.status === "CLAIMED"
           ? `Stake and reward were claimed by ${shortAddress(submission.tester)}.`
+          : submission.status === "EXPIRED"
+            ? `${formatGen(submission.stakeAmount)} stake was refunded after the deterministic review timeout.`
           : `${formatGen(submission.stakeAmount)} stake was slashed back into the campaign pool.`;
 
   return (
@@ -2094,9 +2318,9 @@ function SubmissionRow({
         <small>{formatGen(submission.rewardAmount)}</small>
       </div>
       {submission.status === "PENDING" ? (
-        <button className="secondary-button" onClick={() => onReview(submission)} disabled={busy}>
-          {busy ? <Loader2 className="spin" size={15} /> : <Sparkles size={15} />}
-          Run AI Review
+        <button className="secondary-button" onClick={() => canExpire ? onExpire(submission) : onReview(submission)} disabled={busy}>
+          {busy ? <Loader2 className="spin" size={15} /> : canExpire ? <Clock3 size={15} /> : <Sparkles size={15} />}
+          {canExpire ? "Expire & refund stake" : "Run AI Review"}
         </button>
       ) : null}
     </article>
@@ -2245,45 +2469,45 @@ function CreateCampaignModal({
           />
         </label>
         <div className="binding-fieldset">
-          <strong>Expected transaction binding</strong>
-          <p className="form-hint">
-            Every accepted proof must target this exact recipient and method, and include the task identifier as an exact calldata argument or kwarg.
-          </p>
-          <label>
-            Expected recipient
-            <input
-              spellCheck={false}
-              required
-              pattern="0x[a-fA-F0-9]{40}"
-              placeholder="0x... target Intelligent Contract"
-              value={form.expectedRecipient}
-              onChange={(event) => setForm({ ...form, expectedRecipient: event.target.value })}
-            />
-          </label>
+          <strong>Authenticated GitHub artifact</strong>
+          <p className="form-hint">The contract constructs GitHub API requests and accepts only immutable UTF-8 artifacts up to 4 KiB.</p>
           <div className="form-grid">
-            <label>
-              Expected method
-              <input
-                spellCheck={false}
-                required
-                pattern="[A-Za-z_][A-Za-z0-9_]*"
-                placeholder="create_campaign"
-                value={form.expectedMethod}
-                onChange={(event) => setForm({ ...form, expectedMethod: event.target.value })}
-              />
-            </label>
-            <label>
-              Task identifier
-              <input
-                spellCheck={false}
-                required
-                minLength={3}
-                maxLength={120}
-                placeholder="VP-TASK-2026-001"
-                value={form.expectedTaskIdentifier}
-                onChange={(event) => setForm({ ...form, expectedTaskIdentifier: event.target.value })}
-              />
-            </label>
+            <label>GitHub owner<input required spellCheck={false} value={form.githubOwner} onChange={(event) => setForm({ ...form, githubOwner: event.target.value })} /></label>
+            <label>Repository<input required spellCheck={false} value={form.githubRepository} onChange={(event) => setForm({ ...form, githubRepository: event.target.value })} /></label>
+            <label>Artifact path<input required spellCheck={false} value={form.artifactPath} onChange={(event) => setForm({ ...form, artifactPath: event.target.value })} /></label>
+            <label>Content type<select value={form.artifactContentType} onChange={(event) => setForm({ ...form, artifactContentType: event.target.value as CampaignForm["artifactContentType"] })}><option value="text/markdown">text/markdown</option><option value="text/plain">text/plain</option><option value="application/json">application/json</option></select></label>
+            <label>Submission deadline<input required type="datetime-local" value={form.submissionDeadline} onChange={(event) => setForm({ ...form, submissionDeadline: event.target.value })} /></label>
+          </div>
+        </div>
+        <div className="binding-fieldset">
+          <strong>Every accepted obligation</strong>
+          <p className="form-hint">Each validator must assess every ID exactly once and cite authenticated chunks.</p>
+          {form.obligations.map((obligation, index) => (
+            <div className="form-grid" key={`${index}-${obligation.id}`}>
+              <label>Obligation ID<input required value={obligation.id} onChange={(event) => setForm({ ...form, obligations: form.obligations.map((item, itemIndex) => itemIndex === index ? { ...item, id: event.target.value } : item) })} /></label>
+              <label>Obligation text<input required value={obligation.text} onChange={(event) => setForm({ ...form, obligations: form.obligations.map((item, itemIndex) => itemIndex === index ? { ...item, text: event.target.value } : item) })} /></label>
+            </div>
+          ))}
+          <button type="button" className="secondary-button" disabled={form.obligations.length >= 8} onClick={() => setForm({ ...form, obligations: [...form.obligations, { id: `OBL-${String(form.obligations.length + 1).padStart(3, "0")}`, text: "" }] })}>Add obligation</button>
+        </div>
+        <div className="binding-fieldset">
+          <strong>Exact finalized receipt facts</strong>
+          <p className="form-hint">Selectors must use args.N or kwargs.identifier. Every value is enforced by the contract before approval.</p>
+          <div className="form-grid">
+            <label>Source contract<input required pattern="0x[a-fA-F0-9]{40}" value={form.sourceContract} onChange={(event) => setForm({ ...form, sourceContract: event.target.value })} /></label>
+            <label>Method<input required pattern="[A-Za-z_][A-Za-z0-9_]*" value={form.method} onChange={(event) => setForm({ ...form, method: event.target.value })} /></label>
+            <label>Task selector<input required value={form.taskIdentifierSelector} onChange={(event) => setForm({ ...form, taskIdentifierSelector: event.target.value })} /></label>
+            <label>Task identifier<input required value={form.taskIdentifierValue} onChange={(event) => setForm({ ...form, taskIdentifierValue: event.target.value })} /></label>
+            <label>Deal selector<input required value={form.dealSelector} onChange={(event) => setForm({ ...form, dealSelector: event.target.value })} /></label>
+            <label>Deal ID<input required value={form.dealValue} onChange={(event) => setForm({ ...form, dealValue: event.target.value })} /></label>
+            <label>Recipient selector<input required value={form.recipientSelector} onChange={(event) => setForm({ ...form, recipientSelector: event.target.value })} /></label>
+            <label>Recipient value<input required pattern="0x[a-fA-F0-9]{40}" value={form.recipientValue} onChange={(event) => setForm({ ...form, recipientValue: event.target.value })} /></label>
+            <label>Amount selector<input required value={form.amountSelector} onChange={(event) => setForm({ ...form, amountSelector: event.target.value })} /></label>
+            <label>Amount atto<input required pattern="[0-9]+" value={form.amountAtto} onChange={(event) => setForm({ ...form, amountAtto: event.target.value })} /></label>
+            <label>Kind selector<input required value={form.kindSelector} onChange={(event) => setForm({ ...form, kindSelector: event.target.value })} /></label>
+            <label>Kind value<input required value={form.kindValue} onChange={(event) => setForm({ ...form, kindValue: event.target.value })} /></label>
+            <label>Released selector<input required value={form.releasedSelector} onChange={(event) => setForm({ ...form, releasedSelector: event.target.value })} /></label>
+            <label>Released value<select value={String(form.releasedValue)} onChange={(event) => setForm({ ...form, releasedValue: event.target.value === "true" })}><option value="true">true</option><option value="false">false</option></select></label>
           </div>
         </div>
         <label>

@@ -11,7 +11,7 @@ const ensureBradburyNetwork = vi.fn();
 
 vi.mock("../src/lib/genlayer", () => ({
   CONTRACT_ADDRESS: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
-  RUBRIC_VERSION: "VERDICTPROOF_V2_4",
+  RUBRIC_VERSION: "VERDICTPROOF_V2_5_FULL_ASSURANCE",
   REVIEW_TRANSACTIONS: {},
   explorerContract: vi.fn(() => "https://explorer-bradbury.genlayer.com/address/0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a"),
   explorerTx: vi.fn((hash: string) => `https://explorer-bradbury.genlayer.com/tx/${hash}`),
@@ -52,11 +52,27 @@ type ChainCampaign = {
   submission_count: number;
   approved_count: number;
   rejected_count: number;
-  expected_recipient: string;
-  expected_method: string;
-  expected_task_identifier: string;
+  expired_count: number;
   reserved_reward_pool: string;
   available_reward_slots: number;
+  revision: number;
+  submission_deadline: number;
+  review_timeout_seconds: number;
+  obligations: Array<{ id: string; text: string }>;
+  artifact_policy: Record<string, string>;
+  receipt_policy: {
+    source_contract: string;
+    method: string;
+    task_identifier: { selector: string; value: string };
+    deal: { selector: string; value: string };
+    recipient: { selector: string; value: string };
+    amount_atto: { selector: string; value: string };
+    kind: { selector: string; value: string };
+    released: { selector: string; value: boolean };
+  };
+  repository_identity: Record<string, string>;
+  close_settlement: null | Record<string, unknown>;
+  rubric_version: string;
 };
 
 const walletAddress = "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259";
@@ -134,7 +150,7 @@ function campaign(id = 1, title = "Checkout QA Campaign", submissionCount = 0): 
     title,
     product_url: "https://product.example/checkout",
     task_instruction: "Complete checkout and explain one concrete wallet confirmation issue.",
-    proof_requirement: "Transaction URL, app result URL, written feedback.",
+    proof_requirement: "Finalized transaction, immutable GitHub artifact, and written feedback.",
     reward_pool: "100000000000000000",
     reward_per_approved: "10000000000000000",
     stake_required: "10000000000000000",
@@ -143,11 +159,27 @@ function campaign(id = 1, title = "Checkout QA Campaign", submissionCount = 0): 
     submission_count: submissionCount,
     approved_count: 0,
     rejected_count: 0,
-    expected_recipient: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
-    expected_method: "create_campaign",
-    expected_task_identifier: "VP-CHECKOUT-001",
+    expired_count: 0,
     reserved_reward_pool: "0",
-    available_reward_slots: 10
+    available_reward_slots: 10,
+    revision: 1,
+    submission_deadline: 1788307200,
+    review_timeout_seconds: 86400,
+    obligations: [{ id: "OBL-001", text: "Complete checkout." }, { id: "OBL-002", text: "Document the result." }],
+    artifact_policy: { provider: "GITHUB", auth_mode: "GITHUB_API", owner: "tanphung", repository: "VerdictProof", path: "evidence/result.md", content_type: "text/markdown" },
+    receipt_policy: {
+      source_contract: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
+      method: "release",
+      task_identifier: { selector: "kwargs.task_identifier", value: "VP-CHECKOUT-001" },
+      deal: { selector: "kwargs.deal_id", value: "DEAL-001" },
+      recipient: { selector: "kwargs.recipient", value: walletAddress },
+      amount_atto: { selector: "kwargs.amount_atto", value: "10000000000000000" },
+      kind: { selector: "kwargs.kind", value: "RELEASE" },
+      released: { selector: "kwargs.released", value: true }
+    },
+    repository_identity: { repository_id: "12345", repository_node_id: "R_node", owner_id: "6789", owner: "tanphung", repository: "VerdictProof", full_name: "tanphung/VerdictProof" },
+    close_settlement: null,
+    rubric_version: "VERDICTPROOF_V2_5_FULL_ASSURANCE"
   };
 }
 
@@ -155,31 +187,42 @@ function reviewedSubmission() {
   return {
     submission_id: 1,
     campaign_id: 1,
+    campaign_revision: 1,
     tester: walletAddress,
     transaction_url: `https://explorer-bradbury.genlayer.com/tx/${txHash}`,
-    app_result_url: "https://product.example/checkout/result/1",
     feedback_text: "Specific checkout feedback with a concrete wallet confirmation improvement.",
     stake_amount: "10000000000000000",
     status: "APPROVED",
     score: 88,
     approved: true,
     reward_amount: "10000000000000000",
-    transaction_success: true,
-    identity_match: true,
+    submitted_at: 1788134400,
+    review_deadline: 1788220800,
+    commit_sha: "a".repeat(40),
+    artifact_key: `github://12345/${"a".repeat(40)}/evidence/result.md`,
+    provenance_manifest: { canonical_origin: `github://12345/${"a".repeat(40)}/evidence/result.md`, repository_id: "12345", repository_node_id: "R_node", owner_id: "6789", owner: "tanphung", repository: "VerdictProof", commit_sha: "a".repeat(40), path: "evidence/result.md", content_type: "text/markdown", byte_length: 1500, blob_sha: "b".repeat(40), sha256: "c".repeat(64), total_chunks: 2, chunk_digests: ["d".repeat(64), "e".repeat(64)] },
+    artifact_sha256: "c".repeat(64),
+    artifact_byte_length: 1500,
+    total_chunks: 2,
+    chunk_digests: ["d".repeat(64), "e".repeat(64)],
+    receipt_checks: { finalized_success: true, sender_match: true, source_contract_match: true, method_match: true, task_identifier_match: true, deal_match: true, recipient_match: true, amount_atto_match: true, kind_match: true, released_match: true, all_match: true },
+    obligation_assessments: [
+      { obligation_id: "OBL-001", verdict: "SATISFIED", evidence_id: "ARTIFACT_PRIMARY", chunk_citations: [0], reason_code: "ACTION_CONFIRMED" },
+      { obligation_id: "OBL-002", verdict: "SATISFIED", evidence_id: "ARTIFACT_PRIMARY", chunk_citations: [1], reason_code: "STATE_DOCUMENTED" }
+    ],
+    reviewed_chunks: [0, 1],
     task_completed: true,
     usage_valid: true,
-    proof_score: 36,
-    feedback_score: 22,
-    insight_score: 17,
-    originality_score: 13,
+    proof_score: 40,
+    feedback_score: 20,
+    insight_score: 16,
+    originality_score: 12,
     reason_summary: "Independent validators approved the submitted product evidence.",
     evidence_summary: "The receipt, sender, outcome page, and product feedback were checked independently.",
     improvement_recommendation: "Show the resulting campaign ID beside the final transaction.",
     risk_flags: "GOOD_SIGNAL",
-    rubric_version: "VERDICTPROOF_V2_4",
-    validation_method: "INDEPENDENT_COMPARATIVE",
-    transaction_analysis: "The Bradbury receipt reached consensus AGREE and execution finished successfully.",
-    identity_analysis: "The receipt sender exactly matches the submitting tester wallet.",
+    rubric_version: "VERDICTPROOF_V2_5_FULL_ASSURANCE",
+    validation_method: "INDEPENDENT_FULL_ARTIFACT_COMPARATIVE",
     task_analysis: "The transaction method and rendered outcome prove the requested checkout campaign flow.",
     proof_reason: "Strong receipt, ownership, and outcome evidence.",
     feedback_reason: "Feedback names a specific wallet confirmation issue.",
@@ -188,13 +231,9 @@ function reviewedSubmission() {
     consensus_checks: "EXACT_EVIDENCE_GATES|EXACT_APPROVAL|TOTAL_SCORE_DELTA_12",
     settlement_explanation: "Stake is returned and the reserved campaign reward is unlocked.",
     evidence_transaction_hash: txHash,
-    evidence_outcome_key: "https://product.example/checkout/result/1",
     reserved_reward_amount: "10000000000000000",
     reservation_status: "CONSUMED",
-    recipient_match: true,
-    method_match: true,
-    task_identifier_match: true,
-    binding_analysis: "Receipt recipient, decoded method, and exact task identifier match the campaign binding.",
+    settlement_record: { status: "CLAIMABLE", kind: "CLAIM", recipient: walletAddress, amount_atto: "20000000000000000", released: false },
     claimed: false
   };
 }
@@ -202,16 +241,20 @@ function reviewedSubmission() {
 function fillCampaignForm(title = "Checkout QA Campaign") {
   fireEvent.change(screen.getByLabelText("Campaign title"), { target: { value: title } });
   fireEvent.change(screen.getByLabelText("Product URL"), { target: { value: "https://product.example/checkout" } });
-  fireEvent.change(screen.getByLabelText("Expected recipient"), {
+  fireEvent.change(screen.getByLabelText("Source contract"), {
     target: { value: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a" }
   });
-  fireEvent.change(screen.getByLabelText("Expected method"), { target: { value: "create_campaign" } });
+  fireEvent.change(screen.getByLabelText("Method"), { target: { value: "release" } });
   fireEvent.change(screen.getByLabelText("Task identifier"), { target: { value: "VP-CHECKOUT-001" } });
+  fireEvent.change(screen.getByLabelText("Deal ID"), { target: { value: "DEAL-001" } });
+  fireEvent.change(screen.getByLabelText("Recipient value"), { target: { value: walletAddress } });
+  fireEvent.change(screen.getByLabelText("Amount atto"), { target: { value: "10000000000000000" } });
+  fireEvent.change(screen.getByLabelText("Submission deadline"), { target: { value: "2026-09-02T00:00" } });
   fireEvent.change(screen.getByLabelText("Task instruction"), {
     target: { value: "Complete checkout and explain one concrete wallet confirmation issue." }
   });
   fireEvent.change(screen.getByLabelText("Required proof description"), {
-    target: { value: "Transaction URL, app result URL, written feedback." }
+    target: { value: "Finalized transaction, immutable GitHub artifact, and written feedback." }
   });
 }
 
@@ -243,9 +286,9 @@ describe("VerdictProof app live wallet flow", () => {
       if (method === "get_evidence_usage") {
         return {
           transaction_hash: txHash,
-          outcome_key: "https://product.example/checkout/result/1",
+          artifact_key: `github://12345/${"a".repeat(40)}/evidence/result.md`,
           transaction_submission_id: 0,
-          outcome_submission_id: 0,
+          artifact_submission_id: 0,
           available: true
         };
       }
@@ -272,7 +315,7 @@ describe("VerdictProof app live wallet flow", () => {
   it("labels contract-scoped cache as stale when finalized reads fail", async () => {
     const cached = campaign();
     window.localStorage.setItem(
-      "verdictproof:bradbury:0xfb7632b4bbe41d9fa986ae321e2bcaa1eea2478a:VERDICTPROOF_V2_4:live-state",
+      "verdictproof:bradbury:0xfb7632b4bbe41d9fa986ae321e2bcaa1eea2478a:VERDICTPROOF_V2_5_FULL_ASSURANCE:live-state",
       JSON.stringify({
         campaigns: [{
           campaignId: cached.campaign_id,
@@ -289,11 +332,21 @@ describe("VerdictProof app live wallet flow", () => {
           submissionCount: cached.submission_count,
           approvedCount: cached.approved_count,
           rejectedCount: cached.rejected_count,
-          expectedRecipient: cached.expected_recipient,
-          expectedMethod: cached.expected_method,
-          expectedTaskIdentifier: cached.expected_task_identifier,
+          expiredCount: cached.expired_count,
           reservedRewardPool: cached.reserved_reward_pool,
-          availableRewardSlots: cached.available_reward_slots
+          availableRewardSlots: cached.available_reward_slots,
+          revision: cached.revision,
+          submissionDeadline: cached.submission_deadline,
+          reviewTimeoutSeconds: cached.review_timeout_seconds,
+          obligations: cached.obligations,
+          artifactPolicy: cached.artifact_policy,
+          receiptPolicy: cached.receipt_policy,
+          repositoryIdentity: cached.repository_identity,
+          closeSettlement: cached.close_settlement,
+          rubricVersion: cached.rubric_version,
+          expectedSourceContract: cached.receipt_policy.source_contract,
+          expectedMethod: cached.receipt_policy.method,
+          expectedTaskIdentifier: cached.receipt_policy.task_identifier.value
         }],
         submissions: [],
         savedAt: Date.now()
@@ -372,14 +425,12 @@ describe("VerdictProof app live wallet flow", () => {
           "Checkout QA Campaign",
           "https://product.example/checkout",
           "Complete checkout and explain one concrete wallet confirmation issue.",
-          "Transaction URL, app result URL, written feedback.",
+          "Finalized transaction, immutable GitHub artifact, and written feedback.",
           100000000000000000n,
           10000000000000000n,
           10000000000000000n,
           75n,
-          "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
-          "create_campaign",
-          "VP-CHECKOUT-001"
+          expect.stringContaining('"schema":"VERDICTPROOF_POLICY_V1"')
         ],
         100000000000000000n
       );
@@ -436,7 +487,6 @@ describe("VerdictProof app live wallet flow", () => {
                 campaign_id: 1,
                 tester: walletAddress,
                 transaction_url: "https://example.com/tx/old",
-                app_result_url: "https://example.com/result/old",
                 feedback_text: "Old pending feedback",
                 stake_amount: "10000000000000000",
                 status: "PENDING",
@@ -477,9 +527,9 @@ describe("VerdictProof app live wallet flow", () => {
       if (method === "get_evidence_usage") {
         return {
           transaction_hash: txHash,
-          outcome_key: "https://product.example/checkout/result/1",
+          artifact_key: `github://12345/${"a".repeat(40)}/evidence/result.md`,
           transaction_submission_id: 7,
-          outcome_submission_id: 0,
+          artifact_submission_id: 0,
           available: false
         };
       }
@@ -493,9 +543,9 @@ describe("VerdictProof app live wallet flow", () => {
     fireEvent.change(screen.getByLabelText("Transaction URL"), {
       target: { value: `https://explorer-bradbury.genlayer.com/tx/${txHash}` }
     });
-    fireEvent.change(screen.getByLabelText("Outcome evidence URL"), {
-      target: { value: "https://product.example/checkout/result/1" }
-    });
+    fireEvent.change(screen.getByLabelText("Immutable Git commit SHA"), { target: { value: "a".repeat(40) } });
+    fireEvent.change(screen.getByLabelText("Full artifact SHA-256"), { target: { value: "c".repeat(64) } });
+    fireEvent.change(screen.getByLabelText("Artifact byte length"), { target: { value: "1500" } });
     fireEvent.change(screen.getByLabelText("Feedback text"), {
       target: { value: "I completed checkout and documented a concrete wallet confirmation issue for the product team." }
     });
@@ -527,14 +577,22 @@ describe("VerdictProof app live wallet flow", () => {
     expect(screen.getByText("Finalized GenLayer state")).toBeInTheDocument();
     expect(screen.getByText(/Narrative and rationale fields are the leader report committed after validator agreement/i)).toBeInTheDocument();
     expect(screen.getByText("Independent validator agreement")).toBeInTheDocument();
-    expect(screen.getByText("Independent comparative semantic validation")).toBeInTheDocument();
+    expect(screen.getByText("Independent full-artifact comparative validation")).toBeInTheDocument();
     expect(screen.getByText("Campaign task")).toBeInTheDocument();
-    expect(screen.getByText("The Bradbury receipt reached consensus AGREE and execution finished successfully.")).toBeInTheDocument();
+    expect(screen.getByText("finalized_success=true")).toBeInTheDocument();
     expect(screen.getByText("Strong receipt, ownership, and outcome evidence.")).toBeInTheDocument();
     expect(screen.getByText("Stake is returned and the reserved campaign reward is unlocked.")).toBeInTheDocument();
     expect(screen.getByText("Evidence binding")).toBeInTheDocument();
-    expect(screen.getByText("Decoded from finalized GenLayer calldata")).toBeInTheDocument();
-    expect(screen.getByText(/Receipt recipient, decoded method, and exact task identifier match/)).toBeInTheDocument();
+    expect(screen.getByText("Exact facts returned by the Intelligent Contract")).toBeInTheDocument();
+    expect(screen.getByText("Source contract")).toBeInTheDocument();
+    expect(screen.getByText("Exact deal")).toBeInTheDocument();
+    expect(screen.getByText("Exact recipient")).toBeInTheDocument();
+    expect(screen.getByText("Exact amount (attoGEN)")).toBeInTheDocument();
+    expect(screen.getByText("Settlement kind")).toBeInTheDocument();
+    expect(screen.getByText("Released state")).toBeInTheDocument();
+    expect(screen.getByText("Authenticated provenance")).toBeInTheDocument();
+    expect(screen.getByText("Full-artifact coverage")).toBeInTheDocument();
+    expect(screen.getByText("Every accepted obligation")).toBeInTheDocument();
     expect(screen.getByText("Reward reservation")).toBeInTheDocument();
     expect(screen.getByText("State committed by GenLayer consensus")).toBeInTheDocument();
   });
@@ -545,8 +603,6 @@ describe("VerdictProof app live wallet flow", () => {
       evidence_summary: undefined,
       improvement_recommendation: undefined,
       risk_flags: undefined,
-      transaction_analysis: undefined,
-      identity_analysis: undefined,
       task_analysis: undefined,
       proof_reason: undefined,
       feedback_reason: undefined,
@@ -575,7 +631,7 @@ describe("VerdictProof app live wallet flow", () => {
 
   it("revalidates a cached local review hash with Bradbury RPC before showing consensus metadata", async () => {
     window.localStorage.setItem(
-      "verdictproof:bradbury:0xfb7632b4bbe41d9fa986ae321e2bcaa1eea2478a:VERDICTPROOF_V2_4:tx-feed",
+      "verdictproof:bradbury:0xfb7632b4bbe41d9fa986ae321e2bcaa1eea2478a:VERDICTPROOF_V2_5_FULL_ASSURANCE:tx-feed",
       JSON.stringify([{
         id: txHash,
         hash: txHash,
@@ -612,21 +668,21 @@ describe("VerdictProof app live wallet flow", () => {
     expect(screen.queryByText("Validator votes")).not.toBeInTheDocument();
   });
 
-  it("labels hard-gate reports without claiming semantic task evaluation", async () => {
+  it("renders a receipt-gate rejection from contract state", async () => {
     const hardGate = {
       ...reviewedSubmission(),
       status: "REJECTED",
       approved: false,
       score: 40,
       reward_amount: "0",
-      identity_match: false,
       task_completed: false,
       usage_valid: false,
       proof_score: 0,
       feedback_score: 18,
       insight_score: 13,
       originality_score: 9,
-      validation_method: "INDEPENDENT_HARD_GATE_FEEDBACK",
+      validation_method: "INDEPENDENT_FULL_ARTIFACT_COMPARATIVE",
+      receipt_checks: { ...reviewedSubmission().receipt_checks, sender_match: false, all_match: false },
       reason_summary: "Rejected because the finalized receipt sender does not match the tester wallet.",
       task_analysis: "Task completion was not evaluated because the finalized receipt failed a mandatory hard gate.",
       risk_flags: "IDENTITY_MISMATCH",
@@ -643,9 +699,47 @@ describe("VerdictProof app live wallet flow", () => {
     await screen.findByText(hardGate.reason_summary);
     await userEvent.click(screen.getByRole("button", { name: /^Dashboard$/i }));
 
-    expect(await screen.findByText("Independent hard-gate + comparative feedback")).toBeInTheDocument();
+    expect(await screen.findByText("Independent full-artifact comparative validation")).toBeInTheDocument();
     expect(screen.getByText(hardGate.task_analysis)).toBeInTheDocument();
-    expect(screen.queryByText("Independent comparative semantic validation")).not.toBeInTheDocument();
+    expect(screen.getAllByText("false").length).toBeGreaterThan(0);
+  });
+
+  it("expires a timed-out submission and renders the contract refund lifecycle", async () => {
+    const user = userEvent.setup();
+    const pending = {
+      ...reviewedSubmission(),
+      status: "PENDING",
+      approved: false,
+      score: 0,
+      reward_amount: "0",
+      review_deadline: 1,
+      reservation_status: "RESERVED",
+      reason_summary: "Pending independent GenLayer review."
+    };
+    let liveSubmission = pending;
+    liveCampaigns = [{ ...campaign(1, "Checkout QA Campaign", 1), reserved_reward_pool: "10000000000000000" }];
+    readContract.mockImplementation(async (method: string) => {
+      if (method === "list_campaigns") return { campaigns: liveCampaigns, count: 1, total: 1 };
+      if (method === "list_campaign_submissions") return { submissions: [liveSubmission], count: 1 };
+      throw new Error(`Unexpected read method: ${method}`);
+    });
+    waitAccepted.mockImplementation(async () => {
+      liveSubmission = {
+        ...pending,
+        status: "EXPIRED",
+        reservation_status: "RELEASED",
+        settlement_explanation: "Review timeout expired; reservation returned and tester stake refunded.",
+        settlement_record: { status: "SETTLED", kind: "EXPIRY_REFUND", recipient: walletAddress, amount_atto: "10000000000000000", released: true }
+      };
+    });
+
+    render(<App />);
+    await screen.findByText("Pending independent GenLayer review.");
+    await user.click(screen.getAllByRole("button", { name: /Connect Wallet/i })[0]);
+    await user.click(screen.getByRole("button", { name: /Expire & refund stake/i }));
+
+    await waitFor(() => expect(writeContract).toHaveBeenCalledWith(expect.anything(), "expire_submission", [1n]));
+    expect(await screen.findByText(/stake was refunded after the deterministic review timeout/i)).toBeInTheDocument();
   });
 
   it("lets an owner close a settled campaign and withdraw the remaining pool", async () => {

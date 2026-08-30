@@ -56,7 +56,9 @@ jobs:
           fi
           echo "e218a1854214681560351051f76fe2b878545cf3409455ef372d57014a88ca67  $target" | sha256sum --check --strict
       - name: GenVM lint
-        run: genvm-lint check contracts/verdict_proof.py --json
+        run: |
+          genvm-lint check contracts/verdict_proof.py --json
+          genvm-lint check contracts/evidence_escrow.py --json
       - name: Direct contract tests
         # Keep the direct-mode plugin, but do not initialize the network plugin.
         # Direct tests must never require an account private key.

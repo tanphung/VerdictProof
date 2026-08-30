@@ -1,41 +1,184 @@
-"""Direct-mode tests for VerdictProof.
+"""V2.5 direct and adversarial tests.
 
-Direct mode is used for state transitions, validation, accounting, and mocked
-web/LLM review. Full validator agreement should be covered by integration tests.
+Direct mode executes the leader path. Comparator behavior is tested through the
+module helpers; full protocol-selected validator execution remains an
+integration-test responsibility.
 """
 
+import base64
+import copy
+import hashlib
 import json
 import sys
-from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 
 CONTRACT = "contracts/verdict_proof.py"
-ONE_GEN = 10**18
+NOW_ISO = "2026-08-30T00:00:00Z"
+NOW = int(datetime(2026, 8, 30, tzinfo=timezone.utc).timestamp())
+DEADLINE = NOW + 2 * 86400
 POOL = 5 * 10**17
 REWARD = 5 * 10**16
 STAKE = 10**16
+SOURCE = "0x8b9f38f52c82a333c46f1061be242a9a880e6b0e"
+BENEFICIARY = "0x1111111111111111111111111111111111111111"
 TX_HASH = "0x760c748dbd931513d4f741f8323d30e050df431f6fd1f439389a4b1f5d430cb7"
+TX_HASH_2 = "0x860c748dbd931513d4f741f8323d30e050df431f6fd1f439389a4b1f5d430cb8"
 TX_URL = f"https://explorer-bradbury.genlayer.com/tx/{TX_HASH}"
-EXPECTED_RECIPIENT = "0x8b9f38f52c82a333c46f1061be242a9a880e6b0e"
-EXPECTED_METHOD = "create_campaign"
-EXPECTED_TASK_IDENTIFIER = "TASK-ESCROW-001"
-BOUND_CALLDATA = "f0ae1604617267730d7c5441534b2d455343524f572d303031066d6574686f647c6372656174655f63616d706169676e00"
-WRONG_TASK_CALLDATA = "f0ae1604617267730d7c5441534b2d455343524f572d393939066d6574686f647c6372656174655f63616d706169676e00"
-WRONG_METHOD_CALLDATA = "efad1604617267730d7c5441534b2d455343524f572d303031066d6574686f6474636c6f73655f63616d706169676e00"
+COMMIT = "a" * 40
+COMMIT_2 = "b" * 40
+BLOB = "c" * 40
+ARTIFACT = (
+    "Campaign TASK-001 completed DEAL-001 for the configured beneficiary.\n"
+    + "Evidence confirms the release workflow and public result. " * 24
+)
 
 
-def mock_receipt(
-    direct_vm,
-    sender,
-    *,
-    status=7,
-    consensus_result=1,
-    execution_result=1,
-    recipient=EXPECTED_RECIPIENT,
-    calldata=BOUND_CALLDATA,
-):
-    sender_text = f"0x{sender.hex()}" if isinstance(sender, bytes) else str(sender)
+def policy(**overrides):
+    value = {
+        "schema": "VERDICTPROOF_POLICY_V1",
+        "submission_deadline": DEADLINE,
+        "obligations": [
+            {"id": "OBL-001", "text": "Complete the configured release transaction."},
+            {"id": "OBL-002", "text": "Document the resulting campaign state."},
+        ],
+        "artifact": {
+            "provider": "GITHUB",
+            "auth_mode": "GITHUB_API",
+            "owner": "tanphung",
+            "repository": "VerdictProof",
+            "path": "evidence/result.md",
+            "content_type": "text/markdown",
+        },
+        "receipt": {
+            "source_contract": SOURCE,
+            "method": "release",
+            "task_identifier": {"selector": "kwargs.task_identifier", "value": "TASK-001"},
+            "deal": {"selector": "kwargs.deal_id", "value": "DEAL-001"},
+            "recipient": {"selector": "kwargs.recipient", "value": BENEFICIARY},
+            "amount_atto": {"selector": "kwargs.amount_atto", "value": str(REWARD)},
+            "kind": {"selector": "kwargs.kind", "value": "RELEASE"},
+            "released": {"selector": "kwargs.released", "value": True},
+        },
+    }
+    value.update(overrides)
+    return value
+
+
+def mock_repo(direct_vm, *, owner="tanphung", repository="VerdictProof", status=200):
+    direct_vm.mock_web(
+        r"^https://api\.github\.com/repos/tanphung/VerdictProof$",
+        {
+            "status": status,
+            "body": json.dumps(
+                {
+                    "id": 12345,
+                    "node_id": "R_repo_node",
+                    "name": repository,
+                    "full_name": f"{owner}/{repository}",
+                    "owner": {"login": owner, "id": 6789},
+                }
+            ),
+        },
+    )
+
+
+def mock_artifact(direct_vm, text=ARTIFACT, *, commit=COMMIT, blob=BLOB, status=200, encoding="base64", api_size=None):
+    data = text if isinstance(text, bytes) else text.encode("utf-8")
+    direct_vm.mock_web(
+        rf"^https://api\.github\.com/repos/tanphung/VerdictProof/commits/{commit}$",
+        {"status": status, "body": json.dumps({"sha": commit})},
+    )
+    direct_vm.mock_web(
+        rf"^https://api\.github\.com/repos/tanphung/VerdictProof/contents/evidence/result\.md\?ref={commit}$",
+        {
+            "status": status,
+            "body": json.dumps(
+                {
+                    "type": "file",
+                    "path": "evidence/result.md",
+                    "encoding": encoding,
+                    "sha": blob,
+                    "size": len(data) if api_size is None else api_size,
+                    "content": base64.b64encode(data).decode("ascii"),
+                }
+            ),
+        },
+    )
+    return hashlib.sha256(data).hexdigest(), len(data)
+
+
+def uleb(value):
+    output = bytearray()
+    while True:
+        byte = value & 127
+        value >>= 7
+        output.append(byte | (128 if value else 0))
+        if not value:
+            return bytes(output)
+
+
+def encode_value(value):
+    if value is None:
+        return uleb(0)
+    if value is False:
+        return uleb(8)
+    if value is True:
+        return uleb(16)
+    if isinstance(value, int):
+        return uleb((value << 3) | 1)
+    if isinstance(value, str) and value.startswith("0x") and len(value) == 42:
+        return uleb(24) + bytes.fromhex(value[2:])
+    if isinstance(value, str):
+        raw = value.encode("utf-8")
+        return uleb((len(raw) << 3) | 4) + raw
+    if isinstance(value, list):
+        return uleb((len(value) << 3) | 5) + b"".join(encode_value(item) for item in value)
+    if isinstance(value, dict):
+        output = bytearray(uleb((len(value) << 3) | 6))
+        for key, item in value.items():
+            raw_key = key.encode("utf-8")
+            output.extend(uleb(len(raw_key)))
+            output.extend(raw_key)
+            output.extend(encode_value(item))
+        return bytes(output)
+    raise TypeError(value)
+
+
+def rlp_bytes(value):
+    size = len(value)
+    if size <= 55:
+        return bytes([128 + size]) + value
+    length = size.to_bytes((size.bit_length() + 7) // 8, "big")
+    return bytes([183 + len(length)]) + length + value
+
+
+def rlp_list(payload):
+    size = len(payload)
+    if size <= 55:
+        return bytes([192 + size]) + payload
+    length = size.to_bytes((size.bit_length() + 7) // 8, "big")
+    return bytes([247 + len(length)]) + length + payload
+
+
+def calldata(method="release", **changes):
+    kwargs = {
+        "task_identifier": "TASK-001",
+        "deal_id": "DEAL-001",
+        "recipient": BENEFICIARY,
+        "amount_atto": REWARD,
+        "kind": "RELEASE",
+        "released": True,
+    }
+    kwargs.update(changes)
+    payload = encode_value({"method": method, "args": [], "kwargs": kwargs})
+    return rlp_list(rlp_bytes(payload)).hex()
+
+
+def mock_receipt(direct_vm, tester, *, tx_hash=TX_HASH, sender=None, recipient=SOURCE, status=7, result=1, execution=1, call=None):
+    sender_value = tester if sender is None else sender
+    tester_text = f"0x{sender_value.hex()}" if isinstance(sender_value, bytes) else str(sender_value)
     direct_vm.mock_web(
         r"^https://rpc-bradbury\.genlayer\.com$",
         {
@@ -45,13 +188,13 @@ def mock_receipt(
                 {
                     "jsonrpc": "2.0",
                     "result": {
-                        "id": TX_HASH,
-                        "sender": sender_text,
+                        "id": tx_hash,
+                        "sender": tester_text,
                         "recipient": recipient,
                         "status": status,
-                        "result": consensus_result,
-                        "txExecutionResult": execution_result,
-                        "txCallData": calldata,
+                        "result": result,
+                        "txExecutionResult": execution,
+                        "txCallData": call or calldata(),
                     },
                     "id": 1,
                 }
@@ -60,1394 +203,385 @@ def mock_receipt(
     )
 
 
-def mock_verified_evidence(direct_vm, sender, *, status=7, consensus_result=1, execution_result=1):
-    mock_receipt(
-        direct_vm,
-        sender,
-        status=status,
-        consensus_result=consensus_result,
-        execution_result=execution_result,
-    )
-    direct_vm.mock_web(r".*", {"status": 200, "body": "The public outcome page shows the completed campaign flow."})
-
-
-def mock_hard_gate_feedback(direct_vm, *, feedback=18, insight=13, originality=9):
-    direct_vm.mock_llm(
-        r".*Score feedback after an objective gate failed.*",
-        json.dumps(
+def llm_result(*, violated=None, chunks=None, approved_scores=True):
+    violated = violated or []
+    chunks = chunks if chunks is not None else [0, 1]
+    assessments = []
+    for index, oid in enumerate(("OBL-001", "OBL-002")):
+        assessments.append(
             {
-                "feedback_score": feedback,
-                "insight_score": insight,
-                "originality_score": originality,
-                "feedback_reason": "The feedback identifies a concrete product issue.",
-                "insight_reason": "The observation can guide a product improvement.",
-                "originality_reason": "The feedback is specific to this workflow.",
-                "improvement_recommendation": "Submit proof from the same tester wallet.",
-                "risk_flags": "WALLET_MISMATCH",
+                "obligation_id": oid,
+                "verdict": "VIOLATED" if oid in violated else "SATISFIED",
+                "evidence_id": "ARTIFACT_PRIMARY",
+                "chunk_citations": [min(index, max(chunks))] if chunks else [0],
+                "reason_code": "CONTRADICTION_FOUND" if oid in violated else "ACTION_CONFIRMED",
             }
-        ),
-    )
+        )
+    return {
+        "reviewed_chunks": chunks,
+        "assessments": assessments,
+        "task_completed": not violated,
+        "proof_score": 40 if approved_scores else 20,
+        "feedback_score": 20,
+        "insight_score": 16,
+        "originality_score": 12,
+        "reason_summary": "Complete evidence review finished.",
+        "evidence_summary": "All immutable chunks were examined.",
+        "improvement_recommendation": "Resolve any violated obligation.",
+        "risk_flags": "NONE" if not violated else "OBLIGATION_VIOLATION",
+        "proof_reason": "Proof follows cited chunks.",
+        "feedback_reason": "Feedback is evidence grounded.",
+        "insight_reason": "Insight is actionable.",
+        "originality_reason": "Observation is task specific.",
+        "task_analysis": "Every obligation was assessed exactly once.",
+    }
 
 
-def create_demo_campaign(contract, direct_vm):
-    direct_vm.value = POOL
+def create_campaign(contract, direct_vm, policy_value=None, *, pool=POOL, reward=REWARD):
+    direct_vm.warp(NOW_ISO)
+    mock_repo(direct_vm)
+    direct_vm.value = pool
     cid = contract.create_campaign(
-        "Test GenEscrow Demo",
-        "https://example.com/genescrow-demo",
-        "Create one escrow and explain the escrow creation UX.",
-        "Transaction URL, app result URL, written feedback.",
-        POOL,
-        REWARD,
+        "Full assurance campaign",
+        "https://verdictproof.vercel.app",
+        "Complete every accepted obligation and publish the immutable result.",
+        "A finalized exact receipt and the complete authenticated artifact.",
+        pool,
+        reward,
         STAKE,
         75,
-        EXPECTED_RECIPIENT,
-        EXPECTED_METHOD,
-        EXPECTED_TASK_IDENTIFIER,
+        json.dumps(policy_value or policy()),
     )
     direct_vm.value = 0
     return cid
 
 
-def approve_demo_submission(contract, direct_vm, direct_alice):
-    cid = create_demo_campaign(contract, direct_vm)
+def submit(contract, direct_vm, direct_alice, cid, *, text=ARTIFACT, commit=COMMIT, tx_url=TX_URL):
+    digest, length = mock_artifact(direct_vm, text, commit=commit)
     direct_vm.sender = direct_alice
     direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/approved",
-        (
-            "I completed the campaign transaction and confirmed the wallet, stake, reward, proof, "
-            "and dashboard result. The submission flow worked, but the final status should show "
-            "the new campaign identifier beside the transaction receipt so the outcome is easier to verify."
-        ),
-    )
+    sid = contract.submit_proof(cid, STAKE, tx_url, commit, digest, length, "The release and resulting state are documented with exact campaign-specific evidence.")
     direct_vm.value = 0
-    mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
-    direct_vm.mock_llm(
-        r".*Independently review this test.*",
-        json.dumps(
-            {
-                "score": 90,
-                "transaction_success": True,
-                "identity_match": True,
-                "task_completed": True,
-                "usage_valid": True,
-                "feedback_quality": "HIGH",
-                "proof_score": 38,
-                "feedback_score": 23,
-                "insight_score": 16,
-                "originality_score": 13,
-                "approved": True,
-                "reason_summary": "Good signal.",
-            }
-        ),
-    )
-    contract.evaluate_submission(sid)
-    return cid, sid
+    return sid
 
 
-def reviews_equivalent(contract, leader, validator, minimum_score=75):
-    module = sys.modules[type(contract).__module__]
-    return module._reviews_equivalent(leader, validator, minimum_score)
+def review(contract, direct_vm, sid, tester, *, result=None, receipt_kwargs=None, text=ARTIFACT):
+    mock_artifact(direct_vm, text)
+    mock_receipt(direct_vm, tester, **(receipt_kwargs or {}))
+    direct_vm.mock_llm(r".*Independently evaluate the complete immutable artifact.*", json.dumps(result or llm_result()))
+    return contract.evaluate_submission(sid)
 
 
-def feedback_reviews_equivalent(contract, leader, validator):
-    module = sys.modules[type(contract).__module__]
-    return module._feedback_reviews_equivalent(leader, validator)
-
-
-def pipeline_results_equivalent(contract, leader, validator, minimum_score=75):
-    module = sys.modules[type(contract).__module__]
-    return module._pipeline_eq(leader, validator, minimum_score)
-
-
-def test_validator_prompts_request_decision_fields_only(direct_deploy, monkeypatch):
+def test_create_campaign_stores_full_policy_and_repository_identity(direct_vm, direct_deploy):
     contract = direct_deploy(CONTRACT)
-    module = sys.modules[type(contract).__module__]
-    prompts = []
-
-    monkeypatch.setattr(module, "_render_text", lambda _url: "Campaign 2 is visible with its funded pool.")
-
-    def fake_prompt(prompt, response_format="json"):
-        assert response_format == "json"
-        prompts.append(prompt)
-        return {
-            "task_completed": True,
-            "feedback_score": 20,
-            "insight_score": 16,
-            "originality_score": 12,
-        }
-
-    monkeypatch.setattr(module.gl.nondet, "exec_prompt", fake_prompt)
-    transaction = {
-        "transaction_hash": TX_HASH,
-        "sender": "0x1111111111111111111111111111111111111111",
-        "recipient": EXPECTED_RECIPIENT,
-        "status": 7,
-        "consensus_result": 1,
-        "execution_result": 1,
-        "calldata_method": EXPECTED_METHOD,
-        "calldata_string_values": [EXPECTED_TASK_IDENTIFIER],
-    }
-    binding = {"recipient_match": True, "method_match": True, "task_identifier_match": True}
-    feedback = (
-        "The campaign transaction, wallet, stake, reward, proof, review, and dashboard were clear. "
-        "The result should show the campaign identifier beside its receipt so settlement is easier to verify."
-    )
-
-    module._score_semantic_submission(
-        "https://example.com",
-        "Create a campaign and verify it.",
-        "Show the finalized transaction and public outcome.",
-        transaction,
-        "https://example.com/evidence",
-        feedback,
-        transaction["sender"],
-        70,
-        binding,
-        False,
-    )
-    module._score_hard_gate_feedback(
-        "Create a campaign and verify it.",
-        "Show the finalized transaction and public outcome.",
-        feedback,
-        transaction,
-        transaction["sender"],
-        binding,
-        True,
-        False,
-    )
-
-    assert "task_reason" not in prompts[0]
-    assert "JSON keys: task_completed, feedback_score, insight_score, originality_score." in prompts[0]
-    assert "Only the three scores" in prompts[1]
-    assert "improvement_recommendation" not in prompts[1]
-
-
-def review_candidate(**overrides):
-    candidate = {
-        "transaction_success": True,
-        "identity_match": True,
-        "task_completed": True,
-        "usage_valid": True,
-        "approved": True,
-        "score": 88,
-        "proof_score": 36,
-        "feedback_score": 22,
-        "insight_score": 17,
-        "originality_score": 13,
-        "feedback_quality": "HIGH",
-    }
-    candidate.update(overrides)
-    return candidate
-
-
-def pipeline_candidate(**report_overrides):
-    report = review_candidate(
-        proof_score=40,
-        score=92,
-        rubric_version="VERDICTPROOF_V2_4_3",
-        validation_method="INDEPENDENT_COMPARATIVE",
-        **report_overrides,
-    )
-    return {
-        "transaction": {
-            "transaction_hash": TX_HASH,
-            "sender": "0x1111111111111111111111111111111111111111",
-            "recipient": EXPECTED_RECIPIENT,
-            "status": 7,
-            "consensus_result": 1,
-            "execution_result": 1,
-            "calldata_method": EXPECTED_METHOD,
-            "calldata_string_values": [EXPECTED_TASK_IDENTIFIER],
-        },
-        "binding": {
-            "recipient_match": True,
-            "method_match": True,
-            "task_identifier_match": True,
-        },
-        "outcome_origin_match": True,
-        "report": report,
-    }
-
-
-def test_evaluate_submission_uses_one_nondeterministic_consensus_block():
-    source = Path(CONTRACT).read_text(encoding="utf-8")
-    assert source.count("gl.vm.run_nondet_unsafe(") == 1
-
-
-def test_pipeline_comparison_requires_exact_receipt_and_binding(direct_deploy):
-    contract = direct_deploy(CONTRACT)
-    leader = pipeline_candidate()
-    validator = pipeline_candidate(feedback_score=20, insight_score=16, originality_score=12)
-    validator["report"]["score"] = 88
-    assert pipeline_results_equivalent(contract, leader, validator) is True
-
-    wrong_receipt = pipeline_candidate()
-    wrong_receipt["transaction"]["transaction_hash"] = "0x" + "ab" * 32
-    assert pipeline_results_equivalent(contract, leader, wrong_receipt) is False
-
-    wrong_binding = pipeline_candidate()
-    wrong_binding["binding"]["task_identifier_match"] = False
-    assert pipeline_results_equivalent(contract, leader, wrong_binding) is False
-
-
-def test_create_campaign_stores_fields(direct_vm, direct_deploy, direct_owner):
-    direct_vm.sender = direct_owner
-    contract = direct_deploy(CONTRACT)
-
-    cid = create_demo_campaign(contract, direct_vm)
+    cid = create_campaign(contract, direct_vm)
     campaign = contract.get_campaign(cid)
-
-    assert campaign["campaign_id"] == 1
-    assert campaign["title"] == "Test GenEscrow Demo"
-    assert campaign["reward_pool"] == str(POOL)
-    assert campaign["reward_per_approved"] == str(REWARD)
-    assert campaign["stake_required"] == str(STAKE)
-    assert campaign["minimum_score"] == 75
-    assert campaign["status"] == "OPEN"
-    assert campaign["expected_recipient"] == EXPECTED_RECIPIENT
-    assert campaign["expected_method"] == EXPECTED_METHOD
-    assert campaign["expected_task_identifier"] == EXPECTED_TASK_IDENTIFIER
-    assert campaign["reserved_reward_pool"] == "0"
-    assert campaign["available_reward_slots"] == POOL // REWARD
-
-
-def test_calldata_decoder_extracts_exact_method_and_task_identifier(direct_vm, direct_deploy):
-    contract = direct_deploy(CONTRACT)
-    module = sys.modules[type(contract).__module__]
-
-    decoded = module._decode_transaction_call(BOUND_CALLDATA)
-    assert decoded["method"] == EXPECTED_METHOD
-    assert EXPECTED_TASK_IDENTIFIER in decoded["string_values"]
-    assert module._decode_transaction_call("deadbeef") == {"method": "", "string_values": []}
-
-
-def test_list_campaigns_empty_and_paginated(direct_vm, direct_deploy):
-    contract = direct_deploy(CONTRACT)
-
-    empty = contract.list_campaigns(0, 10)
-    assert empty == {"count": 0, "total": 0, "campaigns": []}
-
-    first = create_demo_campaign(contract, direct_vm)
-    second = create_demo_campaign(contract, direct_vm)
-
-    listed = contract.list_campaigns(0, 1)
-    assert listed["count"] == 1
-    assert listed["total"] == 2
-    assert listed["campaigns"][0]["campaign_id"] == first
-
-    next_page = contract.list_campaigns(1, 50)
-    assert next_page["count"] == 1
-    assert next_page["campaigns"][0]["campaign_id"] == second
-
-
-def test_create_campaign_rejects_bad_values(direct_vm, direct_deploy):
-    contract = direct_deploy(CONTRACT)
-
-    direct_vm.value = 1
-    with direct_vm.expect_revert("reward pool"):
-        contract.create_campaign(
-            "Tiny pool",
-            "https://example.com",
-            "Task",
-            "Proof",
-            1,
-            REWARD,
-            STAKE,
-            75,
-            EXPECTED_RECIPIENT,
-            EXPECTED_METHOD,
-            EXPECTED_TASK_IDENTIFIER,
-        )
-
-    direct_vm.value = POOL
-    with direct_vm.expect_revert("product_url"):
-        contract.create_campaign(
-            "Bad URL",
-            "ftp://example.com",
-            "Task",
-            "Proof",
-            POOL,
-            REWARD,
-            STAKE,
-            75,
-            EXPECTED_RECIPIENT,
-            EXPECTED_METHOD,
-            EXPECTED_TASK_IDENTIFIER,
-        )
-    direct_vm.value = 0
-
-
-def test_create_campaign_rejects_reward_above_pool_and_bad_score(direct_vm, direct_deploy):
-    contract = direct_deploy(CONTRACT)
-
-    direct_vm.value = POOL
-    with direct_vm.expect_revert("invalid reward"):
-        contract.create_campaign(
-            "Reward too high",
-            "https://example.com",
-            "Task",
-            "Proof",
-            POOL,
-            POOL + 1,
-            STAKE,
-            75,
-            EXPECTED_RECIPIENT,
-            EXPECTED_METHOD,
-            EXPECTED_TASK_IDENTIFIER,
-        )
-
-    with direct_vm.expect_revert("minimum_score"):
-        contract.create_campaign(
-            "Bad score",
-            "https://example.com",
-            "Task",
-            "Proof",
-            POOL,
-            REWARD,
-            STAKE,
-            101,
-            EXPECTED_RECIPIENT,
-            EXPECTED_METHOD,
-            EXPECTED_TASK_IDENTIFIER,
-        )
-    direct_vm.value = 0
-
-
-def test_payable_methods_reject_zero_message_value(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-
-    direct_vm.value = 0
-    with direct_vm.expect_revert("campaign pool value mismatch"):
-        contract.create_campaign(
-            "Unfunded Campaign",
-            "https://example.com/unfunded",
-            "Complete a live product test and submit concrete feedback.",
-            "Transaction URL, app result URL, written feedback.",
-            POOL,
-            REWARD,
-            STAKE,
-            75,
-            EXPECTED_RECIPIENT,
-            EXPECTED_METHOD,
-            EXPECTED_TASK_IDENTIFIER,
-        )
-
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = 0
-    with direct_vm.expect_revert("tester stake value mismatch"):
-        contract.submit_proof(
-            cid,
-            STAKE,
-            TX_URL,
-            "https://example.com/result/unfunded",
-            "I completed the flow and found the confirmation copy unclear after wallet signing.",
-        )
-
-
-def test_observed_native_value_must_match_declared_amount(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-
-    direct_vm.value = POOL - 1
-    with direct_vm.expect_revert("campaign pool value mismatch"):
-        contract.create_campaign(
-            "Mismatch Campaign",
-            "https://example.com/mismatch",
-            "Complete a live product test.",
-            "Transaction URL, app result URL, written feedback.",
-            POOL,
-            REWARD,
-            STAKE,
-            75,
-            EXPECTED_RECIPIENT,
-            EXPECTED_METHOD,
-            EXPECTED_TASK_IDENTIFIER,
-        )
-
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE - 1
-    with direct_vm.expect_revert("tester stake value mismatch"):
-        contract.submit_proof(
-            cid,
-            STAKE,
-            TX_URL,
-            "https://example.com/result/mismatch",
-            "I completed the flow and found one specific confirmation issue.",
-        )
-    direct_vm.value = 0
-
-
-def test_submit_proof_creates_pending_submission(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/genescrow-demo/result/1",
-        "I created an escrow and found the confirmation state unclear after signing.",
-    )
-    direct_vm.value = 0
-
-    submission = contract.get_submission(sid)
-    assert submission["status"] == "PENDING"
-    assert submission["stake_amount"] == str(STAKE)
-    assert submission["score"] == 0
-    assert submission["reserved_reward_amount"] == str(REWARD)
-    assert submission["reservation_status"] == "RESERVED"
-    assert submission["evidence_transaction_hash"] == TX_HASH
-    assert submission["evidence_outcome_key"] == "https://example.com/genescrow-demo/result/1"
-    assert contract.get_campaign(cid)["submission_count"] == 1
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
-    assert contract.get_campaign(cid)["reserved_reward_pool"] == str(REWARD)
-
-    usage = contract.get_evidence_usage(TX_URL, "https://example.com/genescrow-demo/result/1")
-    assert usage["available"] is False
-    assert usage["transaction_submission_id"] == sid
-    assert usage["outcome_submission_id"] == sid
-
-
-def test_submit_consumes_transaction_and_outcome_references_once(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/evidence/immutable-one",
-        "I completed the product transaction and documented a concrete wallet confirmation issue.",
-    )
-
-    with direct_vm.expect_revert("transaction evidence has already been consumed"):
-        contract.submit_proof(
-            cid,
-            STAKE,
-            TX_URL + "?alias=1",
-            "https://example.com/evidence/immutable-two",
-            "I completed the product transaction and documented a second confirmation issue.",
-        )
-
-    other_tx = "https://explorer-bradbury.genlayer.com/tx/0x" + "2" * 64
-    with direct_vm.expect_revert("outcome evidence has already been consumed"):
-        contract.submit_proof(
-            cid,
-            STAKE,
-            other_tx,
-            "HTTPS://EXAMPLE.COM/evidence/./immutable-one/?view=alternate#details",
-            "I completed the product transaction and documented another confirmation issue.",
-        )
-    assert contract.get_campaign(cid)["submission_count"] == 1
-    direct_vm.value = 0
-
-
-def test_submit_canonicalizes_query_fragment_outcomes_and_enforces_capacity_exhaustion(
-    direct_vm, direct_deploy, direct_alice,
-):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    for index in range(10):
-        tx_hash = "0x" + f"{index + 100:064x}"
-        contract.submit_proof(
-            cid,
-            STAKE,
-            f"https://explorer-bradbury.genlayer.com/tx/{tx_hash}",
-            f"https://example.com/evidence/capacity-{index}?render=full#report",
-            "I completed the product transaction and documented a concrete wallet confirmation issue.",
-        )
-
-    usage = contract.get_evidence_usage(
-        "https://explorer-bradbury.genlayer.com/tx/0x" + f"{100:064x}",
-        "HTTPS://EXAMPLE.COM/evidence/./capacity-0/?render=compact#summary",
-    )
-    assert usage["available"] is False
-    assert usage["outcome_key"] == "https://example.com/evidence/capacity-0"
-
-    campaign = contract.get_campaign(cid)
-    assert campaign["reward_pool"] == "0"
-    assert campaign["reserved_reward_pool"] == str(POOL)
-    assert campaign["available_reward_slots"] == 0
-    with direct_vm.expect_revert("no unreserved reward capacity"):
-        contract.submit_proof(
-            cid,
-            STAKE,
-            "https://explorer-bradbury.genlayer.com/tx/0x" + "f" * 64,
-            "https://example.com/evidence/capacity-overflow",
-            "I completed the product transaction and documented a concrete wallet confirmation issue.",
-        )
-    assert contract.get_stats()["total_reward_pool"] == str(POOL)
-    direct_vm.value = 0
-
-
-def test_submission_indexes_by_campaign_and_tester(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/index",
-        "I tested the app and found the confirmation copy unclear after signing.",
-    )
-    direct_vm.value = 0
-
-    campaign_rows = contract.list_campaign_submissions(cid)
-    tester = contract.get_submission(sid)["tester"]
-    tester_rows = contract.list_tester_submissions(tester)
-
-    assert campaign_rows["count"] == 1
-    assert campaign_rows["submissions"][0]["submission_id"] == sid
-    assert tester_rows["count"] == 1
-    assert tester_rows["submissions"][0]["submission_id"] == sid
-
-
-def test_submit_requires_exact_stake(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
-    direct_vm.sender = direct_alice
-    direct_vm.value = 0
-    with direct_vm.expect_revert("tester stake value mismatch"):
-        contract.submit_proof(
-            cid,
-            STAKE - 1,
-            TX_URL,
-            "https://example.com/result",
-            "Specific feedback with enough detail.",
-        )
-    direct_vm.value = 0
-
-
-def test_submit_rejects_missing_campaign_and_bad_urls(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    with direct_vm.expect_revert("campaign not found"):
-        contract.submit_proof(
-            999,
-            STAKE,
-            TX_URL,
-            "https://example.com/result",
-            "Specific feedback with enough detail.",
-        )
-
-    with direct_vm.expect_revert("transaction_url"):
-        contract.submit_proof(
-            cid,
-            STAKE,
-            "not-a-url",
-            "https://example.com/result",
-            "Specific feedback with enough detail.",
-        )
-
-    with direct_vm.expect_revert("app_result_url"):
-        contract.submit_proof(
-            cid,
-            STAKE,
-            TX_URL,
-            "ftp://example.com/result",
-            "Specific feedback with enough detail.",
-        )
-    direct_vm.value = 0
-
-
-def test_evaluate_approves_good_feedback(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/genescrow-demo/result/good",
-        "I created an escrow and submitted a test transaction. The wallet connection worked, but after signing, the UI did not clearly show whether the escrow was pending or confirmed.",
-    )
-    direct_vm.value = 0
-
-    mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
-    direct_vm.mock_llm(
-        r".*Independently review this test.*",
-        json.dumps(
-            {
-                "score": 87,
-                "transaction_success": True,
-                "identity_match": True,
-                "task_completed": True,
-                "usage_valid": True,
-                "feedback_quality": "HIGH",
-                "proof_score": 36,
-                "feedback_score": 22,
-                "insight_score": 16,
-                "originality_score": 13,
-                "approved": True,
-                "reason_summary": "The tester completed the flow and gave specific confirmation UX feedback.",
-                "transaction_analysis": "Receipt reached AGREE with successful execution.",
-                "identity_analysis": "Receipt sender matches the tester wallet.",
-                "task_analysis": "Escrow creation is visible in the transaction and outcome page.",
-                "proof_reason": "Strong public transaction and outcome proof.",
-                "feedback_reason": "Feedback names a specific post-signature status issue.",
-                "insight_reason": "The recommendation is actionable for the product owner.",
-                "originality_reason": "The observation is concrete and non-generic.",
-                "settlement_explanation": "Stake and reward are unlocked for the approved tester.",
-            }
-        ),
-    )
-
-    reviewed = contract.evaluate_submission(sid)
-    assert reviewed["status"] == "APPROVED"
-    assert reviewed["score"] == 88
-    assert reviewed["transaction_success"] is True
-    assert reviewed["identity_match"] is True
-    assert reviewed["task_completed"] is True
-    assert reviewed["usage_valid"] is True
-    assert reviewed["proof_score"] == 40
-    assert reviewed["reward_amount"] == str(REWARD)
-    assert reviewed["rubric_version"] == "VERDICTPROOF_V2_4_3"
-    assert reviewed["validation_method"] == "INDEPENDENT_COMPARATIVE"
-    assert reviewed["transaction_analysis"].startswith("Receipt ")
-    assert "matches tester" in reviewed["identity_analysis"]
-    assert reviewed["task_analysis"]
-    assert reviewed["proof_reason"].startswith("Full proof:")
-    assert reviewed["feedback_reason"].startswith("Feedback names")
-    assert reviewed["insight_reason"].startswith("The recommendation")
-    assert reviewed["originality_reason"].startswith("The observation")
-    assert "VALID_DELTA_12_5_4_3" in reviewed["consensus_checks"]
-    assert reviewed["settlement_explanation"].startswith("The reward reserved")
-    assert reviewed["recipient_match"] is True
-    assert reviewed["method_match"] is True
-    assert reviewed["task_identifier_match"] is True
-    assert reviewed["reservation_status"] == "CONSUMED"
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
-
-
-def test_evaluate_requires_pending_submission(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    _, sid = approve_demo_submission(contract, direct_vm, direct_alice)
-
-    with direct_vm.expect_revert("not pending"):
-        contract.evaluate_submission(sid)
-
-    with direct_vm.expect_revert("submission not found"):
-        contract.evaluate_submission(999)
-
-
-def test_evaluate_rejects_generic_feedback_and_slashes_stake(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/genescrow-demo/result/bad",
-        "Good app. Nice project. Very useful.",
-    )
-    direct_vm.value = 0
-
-    mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
-    direct_vm.mock_llm(
-        r".*Independently review this test.*",
-        json.dumps(
-            {
-                "score": 32,
-                "transaction_success": False,
-                "identity_match": False,
-                "task_completed": False,
-                "usage_valid": False,
-                "feedback_quality": "LOW",
-                "proof_score": 8,
-                "feedback_score": 10,
-                "insight_score": 8,
-                "originality_score": 6,
-                "approved": False,
-                "reason_summary": "The feedback is generic and proof does not demonstrate usage.",
-            }
-        ),
-    )
-
-    reviewed = contract.evaluate_submission(sid)
-    assert reviewed["status"] == "REJECTED"
-    assert reviewed["score"] == 44
-    assert reviewed["reward_amount"] == "0"
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL + STAKE)
-
-
-def test_evaluate_rejects_high_score_when_usage_proof_invalid(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/high-score-invalid-proof",
-        "The product copy is clear and I noticed the completion state should be more explicit.",
-    )
-    direct_vm.value = 0
-
-    mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
-    direct_vm.mock_llm(
-        r".*Independently review this test.*",
-        json.dumps(
-            {
-                "score": 82,
-                "transaction_success": True,
-                "identity_match": True,
-                "task_completed": False,
-                "usage_valid": False,
-                "feedback_quality": "HIGH",
-                "proof_score": 35,
-                "feedback_score": 22,
-                "insight_score": 15,
-                "originality_score": 10,
-                "approved": False,
-                "reason_summary": "Feedback is useful, but the proof does not validate real product usage.",
-            }
-        ),
-    )
-
-    reviewed = contract.evaluate_submission(sid)
-    assert reviewed["status"] == "REJECTED"
-    assert reviewed["score"] == 65
-    assert reviewed["proof_score"] == 20
-    assert reviewed["transaction_success"] is True
-    assert reviewed["identity_match"] is True
-    assert reviewed["task_completed"] is False
-    assert reviewed["usage_valid"] is False
-    assert reviewed["reward_amount"] == "0"
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL + STAKE)
-
-
-def test_evaluate_uses_rpc_sender_instead_of_llm_identity_claim(direct_vm, direct_deploy, direct_alice, direct_bob):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/identity-mismatch",
-        "I completed the campaign flow and found the transaction ownership explanation unclear.",
-    )
-    direct_vm.value = 0
-
-    # Register no outcome-page mock: the hard-gate path must not render it.
-    mock_receipt(direct_vm, direct_bob)
-    mock_hard_gate_feedback(direct_vm)
-
-    reviewed = contract.evaluate_submission(sid)
-    assert reviewed["status"] == "REJECTED"
-    assert reviewed["transaction_success"] is True
-    assert reviewed["identity_match"] is False
-    assert reviewed["task_completed"] is False
-    assert reviewed["usage_valid"] is False
-    assert reviewed["proof_score"] == 0
-    assert reviewed["score"] == 41
-    assert reviewed["validation_method"] == "INDEPENDENT_HARD_GATE_FEEDBACK"
-    assert "IDENTITY_MISMATCH" in reviewed["risk_flags"]
-    assert "FEEDBACK_DELTA_5" in reviewed["consensus_checks"]
-
-
-def test_evaluate_keeps_pending_until_receipt_is_finalized(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/accepted-not-finalized",
-        "I completed the workflow and documented a specific confirmation-state issue for the product team.",
-    )
-    direct_vm.value = 0
-    mock_receipt(direct_vm, direct_alice, status=5)
-
-    with direct_vm.expect_revert("[TRANSIENT] evidence transaction is not finalized yet"):
-        contract.evaluate_submission(sid)
-
-    assert contract.get_submission(sid)["status"] == "PENDING"
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
-    assert contract.get_campaign(cid)["reserved_reward_pool"] == str(REWARD)
-
-
-def test_finalized_execution_failure_uses_hard_gate_without_render(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/must-not-render",
-        "The failed transaction still exposed a confusing signing message that should explain the recovery action.",
-    )
-    direct_vm.value = 0
-    mock_receipt(direct_vm, direct_alice, execution_result=0)
-    mock_hard_gate_feedback(direct_vm, feedback=20, insight=14, originality=10)
-
-    reviewed = contract.evaluate_submission(sid)
-
-    assert reviewed["status"] == "REJECTED"
-    assert reviewed["transaction_success"] is False
-    assert reviewed["identity_match"] is True
-    assert reviewed["task_completed"] is False
-    assert reviewed["proof_score"] == 0
-    assert reviewed["score"] == 45
-    assert reviewed["validation_method"] == "INDEPENDENT_HARD_GATE_FEEDBACK"
-    assert "TRANSACTION_FAILED" in reviewed["risk_flags"]
-    assert reviewed["feedback_reason"].startswith("The feedback identifies")
-
-
-@pytest.mark.parametrize(
-    ("recipient", "calldata", "failed_field", "risk_flag"),
-    [
-        ("0x1111111111111111111111111111111111111111", BOUND_CALLDATA, "recipient_match", "RECIPIENT_MISMATCH"),
-        (EXPECTED_RECIPIENT, WRONG_METHOD_CALLDATA, "method_match", "METHOD_MISMATCH"),
-        (EXPECTED_RECIPIENT, WRONG_TASK_CALLDATA, "task_identifier_match", "TASK_IDENTIFIER_MISMATCH"),
-    ],
-)
-def test_exact_campaign_binding_mismatch_rejects_and_releases_reservation(
-    direct_vm,
-    direct_deploy,
-    direct_alice,
-    recipient,
-    calldata,
-    failed_field,
-    risk_flag,
-):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/genescrow-demo/evidence/binding",
-        "I completed the campaign transaction and documented the wallet, proof, review, and settlement behavior.",
-    )
-    direct_vm.value = 0
-    mock_receipt(direct_vm, direct_alice, recipient=recipient, calldata=calldata)
-    mock_hard_gate_feedback(direct_vm)
-
-    reviewed = contract.evaluate_submission(sid)
-
-    assert reviewed["status"] == "REJECTED"
-    assert reviewed[failed_field] is False
-    assert risk_flag in reviewed["risk_flags"]
-    assert reviewed["reservation_status"] == "RELEASED"
-    assert reviewed["binding_analysis"]
-    campaign = contract.get_campaign(cid)
-    assert campaign["reward_pool"] == str(POOL + STAKE)
+    assert campaign["revision"] == 1
+    assert len(campaign["obligations"]) == 2
+    assert campaign["artifact_policy"]["auth_mode"] == "GITHUB_API"
+    assert campaign["repository_identity"]["repository_id"] == "12345"
+    assert campaign["receipt_policy"]["deal"]["value"] == "DEAL-001"
     assert campaign["reserved_reward_pool"] == "0"
 
 
-def test_cross_origin_outcome_uses_objective_gate_without_render(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://unrelated.example.org/not-product-evidence",
-        "The transaction is finalized, but this outcome page is unrelated to the campaign product and must be rejected.",
-    )
-    direct_vm.value = 0
-    mock_receipt(direct_vm, direct_alice)
-    mock_hard_gate_feedback(direct_vm)
-
-    reviewed = contract.evaluate_submission(sid)
-
-    assert reviewed["status"] == "REJECTED"
-    assert reviewed["transaction_success"] is True
-    assert reviewed["identity_match"] is True
-    assert reviewed["task_completed"] is False
-    assert reviewed["proof_score"] == 0
-    assert "OUTCOME_ORIGIN_MISMATCH" in reviewed["risk_flags"]
-    assert reviewed["validation_method"] == "INDEPENDENT_HARD_GATE_FEEDBACK"
-
-
-def test_hard_gate_validator_rejects_malicious_partial_scores(direct_deploy):
-    contract = direct_deploy(CONTRACT)
-    leader = review_candidate(
-        transaction_success=False,
-        identity_match=True,
-        task_completed=False,
-        usage_valid=False,
-        approved=False,
-        score=60,
-        proof_score=0,
-        feedback_score=25,
-        insight_score=20,
-        originality_score=15,
-    )
-    validator = review_candidate(
-        transaction_success=False,
-        identity_match=True,
-        task_completed=False,
-        usage_valid=False,
-        approved=False,
-        score=31,
-        proof_score=0,
-        feedback_score=14,
-        insight_score=10,
-        originality_score=7,
-        feedback_quality="MEDIUM",
-    )
-
-    assert feedback_reviews_equivalent(contract, leader, validator) is False
-
-
-def test_hard_gate_validator_accepts_scores_within_component_tolerance(direct_deploy):
-    contract = direct_deploy(CONTRACT)
-    leader = review_candidate(
-        transaction_success=True,
-        identity_match=False,
-        task_completed=False,
-        usage_valid=False,
-        approved=False,
-        score=39,
-        proof_score=0,
-        feedback_score=17,
-        insight_score=13,
-        originality_score=9,
-        feedback_quality="MEDIUM",
-    )
-    validator = review_candidate(
-        transaction_success=True,
-        identity_match=False,
-        task_completed=False,
-        usage_valid=False,
-        approved=False,
-        score=31,
-        proof_score=0,
-        feedback_score=12,
-        insight_score=9,
-        originality_score=10,
-        feedback_quality="LOW",
-    )
-
-    assert feedback_reviews_equivalent(contract, leader, validator) is True
-
-
-def test_llm_error_does_not_rerun_leader_pipeline(direct_deploy, monkeypatch):
-    contract = direct_deploy(CONTRACT)
-    module = sys.modules[type(contract).__module__]
-    calls = []
-
-    class LeaderError:
-        message = "[LLM_ERROR] malformed response"
-
-    def should_not_run(*_args, **_kwargs):
-        calls.append(True)
-        return {}
-
-    monkeypatch.setattr(module, "_fetch_final_tx", should_not_run)
-    monkeypatch.setattr(module, "_render_text", should_not_run)
-    assert module._pipeline_error_eq(LeaderError(), TX_URL, "https://example.com/result") is False
-    assert calls == []
-
-
-def test_evaluate_keeps_stake_pending_when_external_evidence_is_unavailable(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/unrenderable",
-        "I completed the flow and found the confirmation screen unclear after signing.",
-    )
-    direct_vm.value = 0
-
-    with direct_vm.expect_revert("[TRANSIENT]"):
-        contract.evaluate_submission(sid)
-
-    assert contract.get_submission(sid)["status"] == "PENDING"
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
-    assert contract.get_campaign(cid)["reserved_reward_pool"] == str(REWARD)
-
-
-def test_semantic_outcome_uses_lightweight_http_get_instead_of_browser_render():
-    source = Path(CONTRACT).read_text(encoding="utf-8")
-    assert "gl.nondet.web.get(url)" in source
-    assert "gl.nondet.web.render" not in source
-
-
-def test_outcome_html_normalization_prioritizes_visible_evidence(direct_deploy):
-    contract = direct_deploy(CONTRACT)
-    module = sys.modules[type(contract).__module__]
-    raw = "<html><head><style>body{color:red}</style><script>ignored()</script></head><body><h1>Campaign #2</h1><p>Finalized evidence is visible.</p></body></html>"
-    assert module._html_text(raw) == "Campaign #2 Finalized evidence is visible."
-
-
 @pytest.mark.parametrize(
-    ("status", "expected_error"),
+    "mutator,message",
     [
-        (404, "[EXTERNAL] outcome page returned HTTP 404"),
-        (503, "[TRANSIENT] outcome page temporarily unavailable"),
+        (lambda p: p.update({"extra": True}), "policy has invalid fields"),
+        (lambda p: p.pop("artifact"), "policy has invalid fields"),
+        (lambda p: p["obligations"].append(dict(p["obligations"][0])), "obligation ids must be valid and unique"),
+        (lambda p: p["artifact"].update({"auth_mode": "SIGNED_HTTP"}), "only GITHUB/GITHUB_API"),
+        (lambda p: p["artifact"].update({"content_type": "application/octet-stream"}), "content type does not match"),
+        (lambda p: p["receipt"]["deal"].update({"selector": "deal_id"}), "receipt selector is invalid"),
     ],
 )
-def test_outcome_http_failure_keeps_reservation_pending(
-    direct_vm, direct_deploy, direct_alice, status, expected_error
-):
+def test_policy_rejects_unsafe_or_ambiguous_shapes(direct_vm, direct_deploy, mutator, message):
     contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    outcome_url = f"https://example.com/result/outcome-{status}"
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        outcome_url,
-        "I completed the campaign and documented its wallet, transaction, proof, reward, and settlement behavior.",
-    )
-    direct_vm.value = 0
-    mock_receipt(direct_vm, direct_alice)
+    direct_vm.warp(NOW_ISO)
+    mock_repo(direct_vm)
+    value = policy()
+    mutator(value)
+    direct_vm.value = POOL
+    with direct_vm.expect_revert(message):
+        contract.create_campaign("Title", "https://example.com", "Task", "Proof", POOL, REWARD, STAKE, 75, json.dumps(value))
+
+
+def test_repository_wrong_owner_and_redirect_are_rejected(direct_vm, direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    direct_vm.warp(NOW_ISO)
+    mock_repo(direct_vm, owner="attacker")
+    direct_vm.value = POOL
+    with direct_vm.expect_revert("GitHub repository identity mismatch"):
+        contract.create_campaign("Title", "https://example.com", "Task", "Proof", POOL, REWARD, STAKE, 75, json.dumps(policy()))
+    direct_vm.clear_mocks()
+    mock_repo(direct_vm, status=302)
+    with direct_vm.expect_revert("redirected"):
+        contract.create_campaign("Title", "https://example.com", "Task", "Proof", POOL, REWARD, STAKE, 75, json.dumps(policy()))
+
+
+def test_github_rate_limit_is_transient_not_provenance_rejection(direct_vm, direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    module = sys.modules[type(contract).__module__]
     direct_vm.mock_web(
-        rf"^https://example\.com/result/outcome-{status}$",
-        {"method": "GET", "status": status, "body": "unavailable"},
+        r"^https://api\.github\.com/rate-limited$",
+        {"status": 403, "body": json.dumps({"message": "API rate limit exceeded"})},
     )
-
-    with direct_vm.expect_revert(expected_error):
-        contract.evaluate_submission(sid)
-
-    assert contract.get_submission(sid)["status"] == "PENDING"
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
-    assert contract.get_campaign(cid)["reserved_reward_pool"] == str(REWARD)
+    with direct_vm.expect_revert("[TRANSIENT] GitHub test rate limited"):
+        module._web_json("https://api.github.com/rate-limited", "GitHub test")
 
 
-def test_rpc_4xx_is_external_and_does_not_slash(direct_vm, direct_deploy, direct_alice):
+def test_revision_allowed_only_before_first_submission(direct_vm, direct_deploy, direct_alice, direct_owner):
     contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/external",
-        "I completed the campaign transaction and documented the wallet, proof, dashboard, and settlement behavior.",
-    )
-    direct_vm.value = 0
-    direct_vm.mock_web(r"^https://rpc-bradbury\.genlayer\.com$", {"method": "POST", "status": 404, "body": "not found"})
-
-    with direct_vm.expect_revert("[EXTERNAL] Bradbury RPC returned HTTP 404"):
-        contract.evaluate_submission(sid)
-
-    assert contract.get_submission(sid)["status"] == "PENDING"
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
-    assert contract.get_campaign(cid)["reserved_reward_pool"] == str(REWARD)
+    cid = create_campaign(contract, direct_vm)
+    revised = policy(submission_deadline=NOW + 3 * 86400)
+    mock_repo(direct_vm)
+    result = contract.revise_campaign(cid, "Revised task", "Revised proof", json.dumps(revised))
+    assert result["revision"] == 2
+    submit(contract, direct_vm, direct_alice, cid)
+    direct_vm.sender = direct_owner
+    with direct_vm.expect_revert("immutable after first submission"):
+        contract.revise_campaign(cid, "Again", "Again", json.dumps(revised))
 
 
-def test_rpc_5xx_is_transient_and_does_not_slash(direct_vm, direct_deploy, direct_alice):
+def test_submit_authenticates_full_artifact_and_reserves_reward(direct_vm, direct_deploy, direct_alice):
     contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-    direct_vm.sender = direct_alice
-    direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/transient",
-        "I completed the campaign transaction and documented the wallet, proof, dashboard, and settlement behavior.",
-    )
-    direct_vm.value = 0
-    direct_vm.mock_web(r"^https://rpc-bradbury\.genlayer\.com$", {"method": "POST", "status": 503, "body": "unavailable"})
-
-    with direct_vm.expect_revert("[TRANSIENT] Bradbury RPC temporarily unavailable"):
-        contract.evaluate_submission(sid)
-
-    assert contract.get_submission(sid)["status"] == "PENDING"
-    assert contract.get_campaign(cid)["reward_pool"] == str(POOL - REWARD)
-    assert contract.get_campaign(cid)["reserved_reward_pool"] == str(REWARD)
+    cid = create_campaign(contract, direct_vm)
+    sid = submit(contract, direct_vm, direct_alice, cid)
+    submission = contract.get_submission(sid)
+    campaign = contract.get_campaign(cid)
+    assert submission["artifact_sha256"] == hashlib.sha256(ARTIFACT.encode()).hexdigest()
+    assert submission["artifact_byte_length"] == len(ARTIFACT.encode())
+    assert submission["total_chunks"] == 2
+    assert len(submission["chunk_digests"]) == 2
+    assert submission["provenance_manifest"]["owner_id"] == "6789"
+    assert submission["reservation_status"] == "RESERVED"
+    assert campaign["reward_pool"] == str(POOL - REWARD)
+    assert campaign["reserved_reward_pool"] == str(REWARD)
 
 
-def test_claim_reward_marks_submission_claimed(direct_vm, direct_deploy, direct_alice):
+def test_duplicate_transaction_and_artifact_are_consumed_globally(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = direct_deploy(CONTRACT)
-    _, sid = approve_demo_submission(contract, direct_vm, direct_alice)
-
-    result = contract.claim_reward(sid)
-    assert result["status"] == "CLAIMED"
-    assert result["paid_atto"] == str(STAKE + REWARD)
-    assert contract.get_submission(sid)["status"] == "CLAIMED"
-
-
-def test_claim_requires_tester_and_blocks_double_claim(direct_vm, direct_deploy, direct_alice, direct_bob):
-    contract = direct_deploy(CONTRACT)
-    _, sid = approve_demo_submission(contract, direct_vm, direct_alice)
-
+    cid = create_campaign(contract, direct_vm)
+    submit(contract, direct_vm, direct_alice, cid)
+    digest, length = mock_artifact(direct_vm)
     direct_vm.sender = direct_bob
-    with direct_vm.expect_revert("only tester"):
-        contract.claim_reward(sid)
-
-    direct_vm.sender = direct_alice
-    contract.claim_reward(sid)
-
-    with direct_vm.expect_revert("not approved"):
-        contract.claim_reward(sid)
+    direct_vm.value = STAKE
+    with direct_vm.expect_revert("transaction evidence has already been consumed"):
+        contract.submit_proof(cid, STAKE, TX_URL + "?source=x#ignored", COMMIT, digest, length, "Unused evidence should fail.")
+    mock_artifact(direct_vm)
+    with direct_vm.expect_revert("artifact evidence has already been consumed"):
+        contract.submit_proof(cid, STAKE, f"https://explorer-bradbury.genlayer.com/tx/{TX_HASH_2}", COMMIT, digest, length, "Same immutable artifact should fail.")
 
 
-def test_rejected_submission_cannot_claim(direct_vm, direct_deploy, direct_alice):
+def test_declared_digest_mismatch_reverts_without_consumption(direct_vm, direct_deploy, direct_alice):
     contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
+    cid = create_campaign(contract, direct_vm)
+    _, length = mock_artifact(direct_vm)
     direct_vm.sender = direct_alice
     direct_vm.value = STAKE
-    sid = contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/bad",
-        "Nice app.",
-    )
-    direct_vm.value = 0
-    mock_verified_evidence(direct_vm, contract.get_submission(sid)["tester"])
-    direct_vm.mock_llm(
-        r".*Independently review this test.*",
-        json.dumps(
-            {
-                "score": 20,
-                "transaction_success": False,
-                "identity_match": False,
-                "task_completed": False,
-                "usage_valid": False,
-                "feedback_quality": "LOW",
-                "proof_score": 5,
-                "feedback_score": 7,
-                "insight_score": 5,
-                "originality_score": 3,
-                "approved": False,
-                "reason_summary": "Low quality.",
-            }
-        ),
-    )
-    contract.evaluate_submission(sid)
-
-    with direct_vm.expect_revert("not approved"):
-        contract.claim_reward(sid)
+    with direct_vm.expect_revert("declared artifact digest or byte length mismatch"):
+        contract.submit_proof(cid, STAKE, TX_URL, COMMIT, "0" * 64, length, "Mismatched declaration.")
+    assert contract.get_campaign(cid)["submission_count"] == 0
+    assert contract.get_evidence_usage(cid, TX_URL, COMMIT)["available"] is True
 
 
-def test_comparative_validator_rejects_malicious_score(direct_deploy):
+@pytest.mark.parametrize(
+    "text,encoding,api_size,message",
+    [
+        (b"\xff\xfe", "base64", None, "must be UTF-8"),
+        ("x" * 4097, "base64", None, "1..4096 bytes"),
+        (ARTIFACT, "utf-8", None, "identity or encoding mismatch"),
+        (ARTIFACT, "base64", 1, "1..4096 bytes"),
+    ],
+)
+def test_artifact_rejects_binary_oversize_bad_encoding_and_size(direct_vm, direct_deploy, direct_alice, text, encoding, api_size, message):
     contract = direct_deploy(CONTRACT)
-    leader = review_candidate(
-        score=100,
-        proof_score=40,
-        feedback_score=25,
-        insight_score=20,
-        originality_score=15,
-    )
-    validator = review_candidate(
-        score=76,
-        proof_score=31,
-        feedback_score=19,
-        insight_score=15,
-        originality_score=11,
-    )
-
-    assert reviews_equivalent(contract, leader, validator) is False
+    cid = create_campaign(contract, direct_vm)
+    digest, length = mock_artifact(direct_vm, text, encoding=encoding, api_size=api_size)
+    direct_vm.sender = direct_alice
+    direct_vm.value = STAKE
+    with direct_vm.expect_revert(message):
+        contract.submit_proof(cid, STAKE, TX_URL, COMMIT, digest, min(length, 4096), "Adversarial artifact.")
 
 
-def test_comparative_validator_rejects_threshold_disagreement(direct_deploy):
+def test_valid_prefix_conflicting_tail_is_reviewed_and_rejected(direct_vm, direct_deploy, direct_alice):
+    text = "Valid-looking completion. " + ("supporting detail " * 80) + "CONTRADICTION: OBL-002 was not completed."
     contract = direct_deploy(CONTRACT)
-    leader = review_candidate(
-        approved=True,
-        score=76,
-        proof_score=32,
-        feedback_score=19,
-        insight_score=14,
-        originality_score=11,
-    )
-    validator = review_candidate(
-        approved=False,
-        score=72,
-        proof_score=30,
-        feedback_score=18,
-        insight_score=14,
-        originality_score=10,
-        feedback_quality="MEDIUM",
-    )
-
-    assert reviews_equivalent(contract, leader, validator) is False
+    cid = create_campaign(contract, direct_vm)
+    sid = submit(contract, direct_vm, direct_alice, cid, text=text)
+    total = contract.get_submission(sid)["total_chunks"]
+    result = llm_result(violated=["OBL-002"], chunks=list(range(total)))
+    result["assessments"][1]["chunk_citations"] = [total - 1]
+    reviewed = review(contract, direct_vm, sid, contract.get_submission(sid)["tester"], result=result, text=text)
+    assert reviewed["status"] == "REJECTED"
+    assert reviewed["reviewed_chunks"] == list(range(total))
+    assert reviewed["obligation_assessments"][1]["verdict"] == "VIOLATED"
+    assert reviewed["obligation_assessments"][1]["chunk_citations"] == [total - 1]
 
 
-def test_comparative_validator_accepts_bounded_score_variation(direct_deploy):
+@pytest.mark.parametrize("mutation,message", [
+    (lambda r: r.update({"reviewed_chunks": [0]}), "reviewed_chunks must cover"),
+    (lambda r: r.update({"assessments": r["assessments"][:1]}), "every obligation must be assessed"),
+    (lambda r: r["assessments"].append(dict(r["assessments"][0])), "every obligation must be assessed"),
+    (lambda r: r["assessments"][1].update({"obligation_id": "OBL-999"}), "id is missing, duplicate, or extra"),
+    (lambda r: r["assessments"][0].update({"chunk_citations": [99]}), "chunk citation is invalid"),
+])
+def test_incomplete_or_fabricated_review_rotates_without_settlement(direct_vm, direct_deploy, direct_alice, mutation, message):
     contract = direct_deploy(CONTRACT)
-    leader = review_candidate(score=92, proof_score=40)
-    validator = review_candidate(
-        score=86,
-        proof_score=40,
-        feedback_score=20,
-        insight_score=16,
-        originality_score=10,
-    )
+    cid = create_campaign(contract, direct_vm)
+    sid = submit(contract, direct_vm, direct_alice, cid)
+    result = llm_result()
+    mutation(result)
+    mock_artifact(direct_vm)
+    mock_receipt(direct_vm, contract.get_submission(sid)["tester"])
+    direct_vm.mock_llm(r".*Independently evaluate the complete immutable artifact.*", json.dumps(result))
+    with direct_vm.expect_revert(message):
+        contract.evaluate_submission(sid)
+    pending = contract.get_submission(sid)
+    assert pending["status"] == "PENDING"
+    assert pending["reservation_status"] == "RESERVED"
 
-    assert reviews_equivalent(contract, leader, validator) is True
 
-
-def test_invalid_evidence_accepts_observed_bradbury_score_variance(direct_deploy):
+def test_reason_code_format_is_defensively_normalized(direct_vm, direct_deploy, direct_alice):
     contract = direct_deploy(CONTRACT)
-    leader = review_candidate(
-        task_completed=False,
-        usage_valid=False,
-        approved=False,
-        score=56,
-        proof_score=20,
-        feedback_score=20,
-        insight_score=10,
-        originality_score=6,
-    )
-    validator = review_candidate(
-        task_completed=False,
-        usage_valid=False,
-        approved=False,
-        score=51,
-        proof_score=20,
-        feedback_score=10,
-        insight_score=12,
-        originality_score=9,
-    )
-
-    assert reviews_equivalent(contract, leader, validator) is True
+    cid = create_campaign(contract, direct_vm)
+    sid = submit(contract, direct_vm, direct_alice, cid)
+    result = llm_result()
+    result["assessments"][0]["reason_code"] = "action confirmed: exact evidence"
+    reviewed = review(contract, direct_vm, sid, contract.get_submission(sid)["tester"], result=result)
+    assert reviewed["obligation_assessments"][0]["reason_code"] == "ACTION_CONFIRMED_EXACT_EVIDENCE"
 
 
-def test_invalid_evidence_rejects_unbounded_or_manipulated_score(direct_deploy):
+def test_task_completed_is_derived_from_exact_obligation_vector(direct_vm, direct_deploy, direct_alice):
     contract = direct_deploy(CONTRACT)
-    leader = review_candidate(
-        task_completed=False,
-        usage_valid=False,
-        approved=False,
-        score=80,
-        proof_score=20,
-        feedback_score=25,
-        insight_score=20,
-        originality_score=15,
-    )
-    validator = review_candidate(
-        task_completed=False,
-        usage_valid=False,
-        approved=False,
-        score=20,
-        proof_score=20,
-        feedback_score=0,
-        insight_score=0,
-        originality_score=0,
-    )
-
-    assert reviews_equivalent(contract, leader, validator) is False
+    cid = create_campaign(contract, direct_vm)
+    sid = submit(contract, direct_vm, direct_alice, cid)
+    result = llm_result()
+    result["task_completed"] = False
+    reviewed = review(contract, direct_vm, sid, contract.get_submission(sid)["tester"], result=result)
+    assert reviewed["task_completed"] is True
+    assert reviewed["approved"] is True
 
 
-def test_comparative_validator_requires_exact_evidence_gates(direct_deploy):
+@pytest.mark.parametrize("receipt_kwargs", [
+    {"sender": "0x2222222222222222222222222222222222222222"},
+    {"recipient": "0x2222222222222222222222222222222222222222"},
+    {"call": calldata(method="refund")},
+    {"call": calldata(task_identifier="WRONG")},
+    {"call": calldata(deal_id="WRONG")},
+    {"call": calldata(recipient="0x2222222222222222222222222222222222222222")},
+    {"call": calldata(amount_atto=REWARD + 1)},
+    {"call": calldata(kind="REFUND")},
+    {"call": calldata(released=False)},
+    {"call": "00"},
+    {"result": 2},
+    {"execution": 2},
+])
+def test_exact_receipt_fact_mismatch_always_rejects(direct_vm, direct_deploy, direct_alice, receipt_kwargs):
     contract = direct_deploy(CONTRACT)
-    leader = review_candidate()
-    validator = review_candidate(identity_match=False, usage_valid=False, approved=False)
+    cid = create_campaign(contract, direct_vm)
+    sid = submit(contract, direct_vm, direct_alice, cid)
+    result = review(contract, direct_vm, sid, contract.get_submission(sid)["tester"], receipt_kwargs=receipt_kwargs)
+    assert result["status"] == "REJECTED"
+    assert result["usage_valid"] is False
+    assert result["proof_score"] == 0
+    assert result["reservation_status"] == "RELEASED"
 
-    assert reviews_equivalent(contract, leader, validator) is False
+
+def test_not_finalized_is_transient_and_keeps_reservation(direct_vm, direct_deploy, direct_alice):
+    contract = direct_deploy(CONTRACT)
+    cid = create_campaign(contract, direct_vm)
+    sid = submit(contract, direct_vm, direct_alice, cid)
+    mock_artifact(direct_vm)
+    mock_receipt(direct_vm, contract.get_submission(sid)["tester"], status=6)
+    with direct_vm.expect_revert("not finalized"):
+        contract.evaluate_submission(sid)
+    assert contract.get_submission(sid)["reservation_status"] == "RESERVED"
 
 
-def test_close_campaign_refunds_remaining_pool(direct_vm, direct_deploy, direct_owner):
+def test_valid_full_review_claim_and_close(direct_vm, direct_deploy, direct_alice, direct_owner):
+    contract = direct_deploy(CONTRACT)
+    cid = create_campaign(contract, direct_vm)
+    sid = submit(contract, direct_vm, direct_alice, cid)
+    result = review(contract, direct_vm, sid, contract.get_submission(sid)["tester"])
+    assert result["status"] == "APPROVED"
+    assert result["reservation_status"] == "CONSUMED"
+    assert all(item["verdict"] == "SATISFIED" for item in result["obligation_assessments"])
     direct_vm.sender = direct_owner
+    closed = contract.close_campaign(cid)
+    assert closed["kind"] == "CAMPAIGN_CLOSE_REFUND"
+    direct_vm.sender = direct_alice
+    claimed = contract.claim_reward(sid)
+    assert claimed["paid_atto"] == str(STAKE + REWARD)
+    assert contract.get_submission(sid)["settlement_record"]["released"] is True
+
+
+def test_expiry_releases_reservation_refunds_stake_and_keeps_evidence_consumed(direct_vm, direct_deploy, direct_alice):
     contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
+    cid = create_campaign(contract, direct_vm)
+    sid = submit(contract, direct_vm, direct_alice, cid)
+    direct_vm.warp("2026-09-01T00:00:02Z")
+    result = contract.expire_submission(sid)
+    assert result["status"] == "EXPIRED"
+    assert result["settlement_record"]["kind"] == "EXPIRY_REFUND"
+    assert contract.get_campaign(cid)["reserved_reward_pool"] == "0"
+    assert contract.get_evidence_usage(cid, TX_URL, COMMIT)["available"] is False
 
-    result = contract.close_campaign(cid)
 
-    assert result == {
-        "campaign_id": 1,
-        "status": "CLOSED",
-        "refunded_atto": str(POOL),
+def test_capacity_exhaustion_reverts_before_fetch_or_consumption(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = direct_deploy(CONTRACT)
+    cid = create_campaign(contract, direct_vm, pool=10**17, reward=10**17)
+    submit(contract, direct_vm, direct_alice, cid)
+    direct_vm.clear_mocks()
+    direct_vm.sender = direct_bob
+    direct_vm.value = STAKE
+    with direct_vm.expect_revert("no unreserved reward capacity"):
+        contract.submit_proof(cid, STAKE, f"https://explorer-bradbury.genlayer.com/tx/{TX_HASH_2}", COMMIT_2, "1" * 64, 1, "No capacity.")
+    assert contract.get_campaign(cid)["submission_count"] == 1
+
+
+def test_comparator_rejects_missing_obligation_and_threshold_side(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    module = sys.modules[type(contract).__module__]
+    left = llm_result()
+    left.update({"all_obligations_satisfied": True, "usage_valid": True, "approved": True, "score": 88})
+    right = dict(left)
+    right["assessments"] = left["assessments"][:1]
+    assert module._review_equal(left, right, 75) is False
+    right = dict(left)
+    right.update({"score": 74, "approved": False})
+    assert module._review_equal(left, right, 75) is False
+
+
+def test_artifact_comparator_rejects_missing_reordered_or_changed_chunks(direct_deploy):
+    contract = direct_deploy(CONTRACT)
+    module = sys.modules[type(contract).__module__]
+    chunks, digests = module._chunks(ARTIFACT)
+    artifact = {
+        "canonical_origin": f"github://12345/{COMMIT}/evidence/result.md",
+        "artifact_key": f"github://12345/{COMMIT}/evidence/result.md",
+        "repository_id": "12345",
+        "repository_node_id": "R_repo_node",
+        "owner_id": "6789",
+        "owner": "tanphung",
+        "repository": "VerdictProof",
+        "commit_sha": COMMIT,
+        "path": "evidence/result.md",
+        "content_type": "text/markdown",
+        "byte_length": len(ARTIFACT.encode()),
+        "blob_sha": BLOB,
+        "sha256": hashlib.sha256(ARTIFACT.encode()).hexdigest(),
+        "total_chunks": len(chunks),
+        "chunk_digests": digests,
+        "chunks": chunks,
     }
-    assert contract.get_campaign(cid)["status"] == "CLOSED"
-    assert contract.get_campaign(cid)["reward_pool"] == "0"
-
-
-def test_close_campaign_requires_owner_and_no_pending(
-    direct_vm,
-    direct_deploy,
-    direct_owner,
-    direct_alice,
-):
-    direct_vm.sender = direct_owner
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-
-    direct_vm.sender = direct_alice
-    with direct_vm.expect_revert("only campaign owner"):
-        contract.close_campaign(cid)
-
-    direct_vm.value = STAKE
-    contract.submit_proof(
-        cid,
-        STAKE,
-        TX_URL,
-        "https://example.com/result/pending",
-        (
-            "This campaign transaction proof and dashboard result need an independent validator "
-            "review before the owner can close and withdraw the remaining reward pool."
-        ),
-    )
-    direct_vm.value = 0
-    direct_vm.sender = direct_owner
-    with direct_vm.expect_revert("pending submissions"):
-        contract.close_campaign(cid)
-
-
-def test_close_campaign_blocks_double_close(direct_vm, direct_deploy, direct_owner):
-    direct_vm.sender = direct_owner
-    contract = direct_deploy(CONTRACT)
-    cid = create_demo_campaign(contract, direct_vm)
-    contract.close_campaign(cid)
-
-    with direct_vm.expect_revert("campaign is not open"):
-        contract.close_campaign(cid)
-
-
-def test_approved_claim_survives_campaign_close(
-    direct_vm,
-    direct_deploy,
-    direct_owner,
-    direct_alice,
-):
-    direct_vm.sender = direct_owner
-    contract = direct_deploy(CONTRACT)
-    cid, sid = approve_demo_submission(contract, direct_vm, direct_alice)
-
-    direct_vm.sender = direct_owner
-    close_result = contract.close_campaign(cid)
-    assert int(close_result["refunded_atto"]) == POOL - REWARD
-
-    direct_vm.sender = direct_alice
-    claim_result = contract.claim_reward(sid)
-    assert claim_result["status"] == "CLAIMED"
+    assert module._artifact_equal(artifact, copy.deepcopy(artifact)) is True
+    missing = copy.deepcopy(artifact)
+    missing["chunks"] = missing["chunks"][:-1]
+    assert module._artifact_equal(artifact, missing) is False
+    reordered = copy.deepcopy(artifact)
+    reordered["chunk_digests"] = list(reversed(reordered["chunk_digests"]))
+    assert module._artifact_equal(artifact, reordered) is False
+    changed = copy.deepcopy(artifact)
+    changed["sha256"] = "0" * 64
+    assert module._artifact_equal(artifact, changed) is False

@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -16,6 +17,8 @@ import { testnetBradbury } from "genlayer-js/chains";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const RPC_URL = testnetBradbury.rpcUrls.default.http[0];
 const INITIAL_VALIDATORS = 5n;
+const CONTRACT_FILE = String(process.env.VERDICTPROOF_DEPLOY_CONTRACT ?? "contracts/verdict_proof.py").replaceAll("\\", "/");
+const DEPLOYMENT_STATE = resolve(ROOT, "deploy", ".bradbury-v25-deployments.json");
 const rpcTransport = () => http(RPC_URL, { retryCount: 0, timeout: 120_000 });
 
 function readEnv(path) {
@@ -102,7 +105,22 @@ async function main() {
     throw new Error("Bradbury addTransaction ABI is unavailable");
   }
 
-  let source = readFileSync(resolve(ROOT, "contracts", "verdict_proof.py"), "utf8");
+  const sourcePath = resolve(ROOT, CONTRACT_FILE);
+  let source = readFileSync(sourcePath, "utf8");
+  const sourceSha256 = createHash("sha256").update(source).digest("hex");
+  const saved = existsSync(DEPLOYMENT_STATE)
+    ? JSON.parse(readFileSync(DEPLOYMENT_STATE, "utf8"))
+    : { deployments: {} };
+  const prior = saved.deployments?.[CONTRACT_FILE];
+  if (prior?.sourceSha256 === sourceSha256 && /^0x[a-fA-F0-9]{40}$/.test(prior.contractAddress ?? "")) {
+    const deployed = await createClient({ chain: testnetBradbury }).getContractCode(prior.contractAddress);
+    if (deployed === source) {
+      console.log(`Resuming verified deployment for ${CONTRACT_FILE}.`);
+      console.log(JSON.stringify(prior));
+      return;
+    }
+    throw new Error(`Saved ${CONTRACT_FILE} deployment does not match local source`);
+  }
   const controlContract = String(process.env.VERDICTPROOF_DEPLOY_CONTROL_CONTRACT ?? "");
   if (controlContract) {
     if (process.env.VERDICTPROOF_DEPLOY_DRY_RUN !== "1" || !/^0x[a-fA-F0-9]{40}$/.test(controlContract)) {
@@ -191,8 +209,17 @@ async function main() {
 
   const client = createClient({ chain: testnetBradbury });
   const contractAddress = await waitForExecution(client, genlayerHash);
+  saved.deployments ??= {};
+  saved.deployments[CONTRACT_FILE] = {
+    contractFile: CONTRACT_FILE,
+    sourceSha256,
+    contractAddress,
+    deploymentTransaction: genlayerHash,
+    evmTransaction: evmHash
+  };
+  writeFileSync(DEPLOYMENT_STATE, `${JSON.stringify(saved, null, 2)}\n`, "utf8");
   console.log(`Contract address: ${contractAddress}`);
-  console.log(JSON.stringify({ contractAddress, deploymentTransaction: genlayerHash, evmTransaction: evmHash }));
+  console.log(JSON.stringify(saved.deployments[CONTRACT_FILE]));
 }
 
 main().catch((error) => {
