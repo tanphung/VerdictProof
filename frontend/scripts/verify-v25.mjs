@@ -198,7 +198,14 @@ async function finalize(client, accountValue, hash, label) {
   const finalizeAbi = (testnetBradbury.consensusMainContract?.abi ?? []).find((entry) => entry.type === "function" && entry.name === "finalizeTransaction");
   if (!consensusAddress || !finalizeAbi) throw new Error("Bradbury finalize ABI unavailable");
   for (let attempt = 0; attempt < 900; attempt += 1) {
-    const tx = await client.getTransaction({ hash });
+    let tx;
+    try {
+      tx = await client.getTransaction({ hash });
+    } catch (error) {
+      if (!/timeout|429|rate limit|fetch failed|network|capacity|backpressure/i.test(String(error?.message ?? error))) throw error;
+      await sleep(5000);
+      continue;
+    }
     const status = String(tx.statusName ?? tx.status_name ?? tx.status ?? "").toUpperCase();
     if (status === "FINALIZED") return snapshot(tx, hash);
     if (status === "READY_TO_FINALIZE") {
