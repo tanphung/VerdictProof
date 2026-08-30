@@ -282,6 +282,7 @@ def _assessments(raw,obligations,total_chunks):
 		if not isinstance(citations,list)or not citations:raise gl.vm.UserError(f'{LLM_ERROR} obligation assessment requires chunk citations')
 		normalized=[]
 		for citation in citations:
+			if isinstance(citation,str)and citation.isdigit():citation=int(citation)
 			if not isinstance(citation,int)or isinstance(citation,bool)or citation<0 or citation>=total_chunks or citation in normalized:raise gl.vm.UserError(f'{LLM_ERROR} obligation chunk citation is invalid')
 			normalized.append(citation)
 		raw_reason=_clean(item['reason_code'],64).upper()
