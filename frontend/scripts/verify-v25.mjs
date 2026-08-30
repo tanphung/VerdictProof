@@ -14,9 +14,12 @@ const ATTO = 10n ** 18n;
 const INITIAL_VALIDATORS = 5n;
 const RUBRIC = "VERDICTPROOF_V2_5_FULL_ASSURANCE";
 const STATE_PATH = resolve(ROOT, "deploy", ".bradbury-v25-verification-state.json");
+const PREFLIGHT_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-v25-preflight-state.json");
 const DEPLOYMENTS_PATH = resolve(ROOT, "deploy", ".bradbury-v25-deployments.json");
 const PUBLIC_ARTIFACT = resolve(ROOT, "deploy", "latest-bradbury-verification.json");
 const ARTIFACT_COMMIT = String(process.argv[2] ?? "").toLowerCase();
+const MODE = String(process.argv[3] ?? "verify");
+const SECONDARY_COMMIT = String(process.env.VERDICTPROOF_V25_SECONDARY_COMMIT ?? "").toLowerCase();
 if (!/^[0-9a-f]{40}$/.test(ARTIFACT_COMMIT)) {
   throw new Error("Usage: npm run verify:bradbury -- <immutable-40-char-git-commit>");
 }
@@ -53,7 +56,10 @@ function loadJson(path, fallback) {
 }
 
 function saveState(state) {
-  writeFileSync(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  const target = state._checkpointPath ?? STATE_PATH;
+  const persisted = { ...state };
+  delete persisted._checkpointPath;
+  writeFileSync(target, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
 }
 
 function sleep(ms) { return new Promise((done) => setTimeout(done, ms)); }
@@ -229,9 +235,12 @@ async function findCampaign(client, verdict, title) {
 }
 
 async function createCampaign(client, state, verdict, sponsor, fields) {
+  state.campaignDeadlines ??= {};
+  state.campaignDeadlines[fields.key] ??= Math.floor(Date.now() / 1000) + 7 * 86400;
+  saveState(state);
   const policy = {
     schema: "VERDICTPROOF_POLICY_V1",
-    submission_deadline: Math.floor(Date.now() / 1000) + 7 * 86400,
+    submission_deadline: state.campaignDeadlines[fields.key],
     obligations: fields.obligations,
     artifact: { provider: "GITHUB", auth_mode: "GITHUB_API", owner: "tanphung", repository: "VerdictProof", path: fields.path, content_type: "text/markdown" },
     receipt: {
@@ -272,14 +281,14 @@ function artifact(path) {
   return { path: path.replaceAll("\\", "/"), sha256: createHash("sha256").update(bytes).digest("hex"), byteLength: bytes.length };
 }
 
-async function submit(client, state, verdict, tester, campaign, evidence, file, feedback, key, expectError = false) {
-  const before = await read(client, verdict, "get_evidence_usage", [BigInt(campaign.campaign_id), txUrl(evidence.hash), ARTIFACT_COMMIT]);
+async function submit(client, state, verdict, tester, campaign, evidence, file, feedback, key, expectError = false, commit = ARTIFACT_COMMIT) {
+  const before = await read(client, verdict, "get_evidence_usage", [BigInt(campaign.campaign_id), txUrl(evidence.hash), commit]);
   const record = await execute(client, state, `submit:${key}`, `Submit ${key}`, {
     account: tester, address: verdict, functionName: "submit_proof",
-    args: [BigInt(campaign.campaign_id), BigInt(campaign.stake_required), txUrl(evidence.hash), ARTIFACT_COMMIT, file.sha256, BigInt(file.byteLength), feedback],
+    args: [BigInt(campaign.campaign_id), BigInt(campaign.stake_required), txUrl(evidence.hash), commit, file.sha256, BigInt(file.byteLength), feedback],
     value: BigInt(campaign.stake_required)
   }, expectError);
-  const after = await read(client, verdict, "get_evidence_usage", [BigInt(campaign.campaign_id), txUrl(evidence.hash), ARTIFACT_COMMIT]);
+  const after = await read(client, verdict, "get_evidence_usage", [BigInt(campaign.campaign_id), txUrl(evidence.hash), commit]);
   if (expectError) {
     if (compact(canonical(normalized(before))) !== compact(canonical(normalized(after)))) throw new Error(`${key} expected rejection changed evidence usage`);
     return { record, before, after };
@@ -309,19 +318,38 @@ async function main() {
   const deployments = loadJson(DEPLOYMENTS_PATH, { deployments: {} }).deployments;
   const verdictDeployment = deployments["contracts/verdict_proof.py"];
   const escrowDeployment = deployments["contracts/evidence_escrow.py"];
-  if (!verdictDeployment || !escrowDeployment) throw new Error("Deploy both V2.5 contracts before verification");
-  const verdict = verdictDeployment.contractAddress;
+  if (!escrowDeployment) throw new Error("Deploy the V2.5 evidence escrow before verification");
   const escrow = escrowDeployment.contractAddress;
   const client = createClient({ chain: testnetBradbury });
+  if (MODE === "prepare") {
+    let preflight = loadJson(PREFLIGHT_STATE_PATH, { artifactCommit: ARTIFACT_COMMIT, escrow, transactions: {} });
+    preflight._checkpointPath = PREFLIGHT_STATE_PATH;
+    if (preflight.artifactCommit !== ARTIFACT_COMMIT || preflight.escrow.toLowerCase() !== escrow.toLowerCase()) throw new Error("Preflight checkpoint belongs to another release");
+    const release = await releaseEvidence(client, preflight, escrow, approved, {
+      key: "studionetPreflight", task: `VP25-STUDIONET-${ARTIFACT_COMMIT.slice(0, 8)}`,
+      deal: `DEAL-STUDIONET-${ARTIFACT_COMMIT.slice(0, 8)}`, recipient: rejected.address, amount: gen(0.001)
+    });
+    console.log(JSON.stringify({ escrow, releaseTransaction: release.hash, transactionUrl: txUrl(release.hash) }));
+    return;
+  }
+  if (!verdictDeployment) throw new Error("Deploy VerdictProof V2.5 before full verification");
+  if (!/^[0-9a-f]{40}$/.test(SECONDARY_COMMIT) || SECONDARY_COMMIT === ARTIFACT_COMMIT) throw new Error("Set VERDICTPROOF_V25_SECONDARY_COMMIT to a second immutable commit containing the same capacity artifact");
+  const verdict = verdictDeployment.contractAddress;
+  const deploymentVerification = {};
   for (const deployment of [verdictDeployment, escrowDeployment]) {
     const local = readFileSync(resolve(ROOT, deployment.contractFile), "utf8");
     const deployed = await client.getContractCode(deployment.contractAddress);
     if (local !== deployed || createHash("sha256").update(local).digest("hex") !== deployment.sourceSha256) throw new Error(`${deployment.contractFile} deployed source mismatch`);
     const [localSchema, deployedSchema] = await Promise.all([client.getContractSchemaForCode(local), client.getContractSchema(deployment.contractAddress)]);
     if (compact(canonical(normalized(localSchema))) !== compact(canonical(normalized(deployedSchema)))) throw new Error(`${deployment.contractFile} deployed schema mismatch`);
+    const deploymentTx = await client.getTransaction({ hash: deployment.deploymentTransaction });
+    const consensus = snapshot(deploymentTx, deployment.deploymentTransaction);
+    if (consensus.statusName !== "FINALIZED" || consensus.resultName !== "AGREE" || consensus.executionResultName !== "FINISHED_WITH_RETURN") throw new Error(`${deployment.contractFile} deployment is not finalized successfully`);
+    deploymentVerification[deployment.contractFile] = { ...deployment, exactSourceMatch: true, exactSchemaMatch: true, consensus };
   }
-  let state = loadJson(STATE_PATH, { artifactCommit: ARTIFACT_COMMIT, verdict, escrow, transactions: {} });
-  if (state.artifactCommit !== ARTIFACT_COMMIT || state.verdict.toLowerCase() !== verdict.toLowerCase() || state.escrow.toLowerCase() !== escrow.toLowerCase()) throw new Error("V2.5 checkpoint belongs to a different immutable release");
+  let state = loadJson(STATE_PATH, { artifactCommit: ARTIFACT_COMMIT, secondaryCommit: SECONDARY_COMMIT, verdict, escrow, transactions: {} });
+  state._checkpointPath = STATE_PATH;
+  if (state.artifactCommit !== ARTIFACT_COMMIT || state.secondaryCommit !== SECONDARY_COMMIT || state.verdict.toLowerCase() !== verdict.toLowerCase() || state.escrow.toLowerCase() !== escrow.toLowerCase()) throw new Error("V2.5 checkpoint belongs to a different immutable release");
   saveState(state);
   const suffix = ARTIFACT_COMMIT.slice(0, 8);
   const amount = gen(0.001);
@@ -362,14 +390,14 @@ async function main() {
     recipient: rejected.address, amount
   });
   const files = Object.fromEntries(Object.values(scenarios).map((item) => [item.key, artifact(item.path)]));
-  const approvedSubmission = await submit(client, state, verdict, approved, campaigns.approved.campaign, evidence.approved, files.approved, "The release and immutable report document exact receipt facts, complete chunk verification, and atomic reservation accounting.", "approved");
+  const approvedSubmission = await submit(client, state, verdict, approved, campaigns.approved.campaign, evidence.approved, files.approved, "I verified three linked controls: the finalized release calldata contains the exact task, deal, recipient, amount, kind and released state; the GitHub manifest covers every byte with ordered chunk digests; and reward capacity is reserved before review. The report should keep the exact mismatched field beside each gate and warn about consumed evidence before wallet signing. Those changes would shorten receipt debugging without weakening contract enforcement.", "approved");
   const bindingSubmission = await submit(client, state, verdict, approved, campaigns.binding.campaign, bindingActual, files.binding, "This genuine finalized release intentionally belongs to a different task and deal and must fail exact binding.", "binding");
   const semanticSubmission = await submit(client, state, verdict, approved, campaigns.semantic.campaign, evidence.semantic, files.semantic, "The receipt matches, but the complete artifact deliberately omits the required settlement-accounting obligation.", "semantic");
   const duplicateTx = await submit(client, state, verdict, approved, campaigns.duplicateTx.campaign, evidence.approved, files.duplicateTx, "The transaction was already consumed and this atomic submission must fail.", "duplicateTx", true);
   const duplicateFirst = await submit(client, state, verdict, approved, campaigns.duplicateArtifactA.campaign, evidence.duplicateArtifactA, files.duplicateArtifactA, "This first use consumes the immutable artifact key.", "duplicateArtifactA");
   const duplicateArtifact = await submit(client, state, verdict, approved, campaigns.duplicateArtifactB.campaign, evidence.duplicateArtifactB, files.duplicateArtifactB, "A second transaction cannot reuse the globally consumed artifact key.", "duplicateArtifactB", true);
   const capacityFirst = await submit(client, state, verdict, approved, campaigns.capacity.campaign, evidence.capacity, files.capacity, "This first submission atomically reserves the campaign's only reward slot.", "capacityFirst");
-  const capacitySecond = await submit(client, state, verdict, approved, campaigns.capacity.campaign, evidence.duplicateArtifactB, files.capacity, "No capacity remains, so this must fail before evidence consumption.", "capacitySecond", true);
+  const capacitySecond = await submit(client, state, verdict, approved, campaigns.capacity.campaign, evidence.duplicateArtifactB, files.capacity, "No capacity remains, so this must fail before evidence consumption.", "capacitySecond", true, SECONDARY_COMMIT);
   if (!capacitySecond.before.available || !capacitySecond.after.available) throw new Error("Capacity failure consumed its unique evidence references");
   const expirySubmission = await submit(client, state, verdict, approved, campaigns.expiry.campaign, evidence.expiry, files.expiry, "This pending submission demonstrates deterministic expiry and refund after the contract deadline.", "expiry");
   const approvedReview = await review(client, state, verdict, sponsor, approvedSubmission.submission, "APPROVED", "approved");
@@ -396,9 +424,9 @@ async function main() {
   }
   const report = {
     generatedAt: new Date().toISOString(), network: "testnet-bradbury", rubricVersion: RUBRIC,
-    appUrl: APP_URL, artifactCommit: ARTIFACT_COMMIT,
+    appUrl: APP_URL, artifactCommit: ARTIFACT_COMMIT, secondaryArtifactCommit: SECONDARY_COMMIT,
     contractAddress: verdict, contractUrl: addressUrl(verdict), evidenceEscrowAddress: escrow, evidenceEscrowUrl: addressUrl(escrow),
-    deployments: { verdictProof: verdictDeployment, evidenceEscrow: escrowDeployment },
+    deployments: { verdictProof: deploymentVerification["contracts/verdict_proof.py"], evidenceEscrow: deploymentVerification["contracts/evidence_escrow.py"] },
     roles: { sponsor: sponsor.address, approvedTester: approved.address, rejectedTester: rejected.address },
     campaigns: Object.fromEntries(Object.entries(campaigns).map(([key, value]) => [key, value.campaign])),
     expectedFailures: { duplicateTransaction: duplicateTx, duplicateArtifact, capacityExhaustion: capacitySecond },

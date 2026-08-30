@@ -87,6 +87,40 @@ async function waitForExecution(client, hash) {
   throw new Error("Deployment did not execute within 30 minutes");
 }
 
+async function waitForFinalized(client, account, hash) {
+  const evmClient = createPublicClient({ chain: testnetBradbury, transport: rpcTransport() });
+  const consensusAddress = testnetBradbury.consensusMainContract?.address;
+  const finalizeAbi = (testnetBradbury.consensusMainContract?.abi ?? []).find(
+    (entry) => entry.type === "function" && entry.name === "finalizeTransaction"
+  );
+  if (!consensusAddress || !finalizeAbi) throw new Error("Bradbury finalizeTransaction ABI is unavailable");
+  let attempted = false;
+  for (let attempt = 0; attempt < 900; attempt += 1) {
+    const tx = await client.getTransaction({ hash });
+    const status = String(tx.statusName ?? tx.status_name ?? tx.status ?? "").toUpperCase();
+    if (status === "FINALIZED") return;
+    if (status === "READY_TO_FINALIZE" && !attempted) {
+      attempted = true;
+      const data = encodeFunctionData({ abi: [finalizeAbi], functionName: "finalizeTransaction", args: [hash] });
+      try {
+        const wallet = createWalletClient({ account, chain: testnetBradbury, transport: rpcTransport() });
+        const evmHash = await wallet.sendTransaction({
+          account, chain: testnetBradbury, to: consensusAddress, data,
+          gas: 300_000n, gasPrice: await evmClient.getGasPrice(), type: "legacy"
+        });
+        await evmClient.waitForTransactionReceipt({ hash: evmHash });
+        console.log(`Finalization EVM transaction: ${evmHash}`);
+      } catch (error) {
+        const message = String(error?.message ?? error);
+        if (!/already|finaliz|capacity|backpressure|rate/i.test(message)) throw error;
+        attempted = false;
+      }
+    }
+    await new Promise((resolveSleep) => setTimeout(resolveSleep, 5000));
+  }
+  throw new Error("Deployment did not reach FINALIZED within the verification window");
+}
+
 async function main() {
   const env = readEnv(resolve(ROOT, ".env"));
   const rawKey = String(env.ACCOUNT_PRIVATE_KEY ?? "");
@@ -115,6 +149,7 @@ async function main() {
   if (prior?.sourceSha256 === sourceSha256 && /^0x[a-fA-F0-9]{40}$/.test(prior.contractAddress ?? "")) {
     const deployed = await createClient({ chain: testnetBradbury }).getContractCode(prior.contractAddress);
     if (deployed === source) {
+      await waitForFinalized(createClient({ chain: testnetBradbury }), account, prior.deploymentTransaction);
       console.log(`Resuming verified deployment for ${CONTRACT_FILE}.`);
       console.log(JSON.stringify(prior));
       return;
@@ -209,6 +244,7 @@ async function main() {
 
   const client = createClient({ chain: testnetBradbury });
   const contractAddress = await waitForExecution(client, genlayerHash);
+  await waitForFinalized(client, account, genlayerHash);
   saved.deployments ??= {};
   saved.deployments[CONTRACT_FILE] = {
     contractFile: CONTRACT_FILE,

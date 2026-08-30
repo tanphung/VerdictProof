@@ -268,7 +268,7 @@ def submit(contract, direct_vm, direct_alice, cid, *, text=ARTIFACT, commit=COMM
 def review(contract, direct_vm, sid, tester, *, result=None, receipt_kwargs=None, text=ARTIFACT):
     mock_artifact(direct_vm, text)
     mock_receipt(direct_vm, tester, **(receipt_kwargs or {}))
-    direct_vm.mock_llm(r".*Independently evaluate the complete immutable artifact.*", json.dumps(result or llm_result()))
+    direct_vm.mock_llm(r".*Evaluate all immutable artifact chunks independently.*", json.dumps(result or llm_result()))
     return contract.evaluate_submission(sid)
 
 
@@ -434,7 +434,7 @@ def test_incomplete_or_fabricated_review_rotates_without_settlement(direct_vm, d
     mutation(result)
     mock_artifact(direct_vm)
     mock_receipt(direct_vm, contract.get_submission(sid)["tester"])
-    direct_vm.mock_llm(r".*Independently evaluate the complete immutable artifact.*", json.dumps(result))
+    direct_vm.mock_llm(r".*Evaluate all immutable artifact chunks independently.*", json.dumps(result))
     with direct_vm.expect_revert(message):
         contract.evaluate_submission(sid)
     pending = contract.get_submission(sid)

@@ -18,6 +18,7 @@ npm-debug.log*
 deploy/.bradbury-verification-state.json
 deploy/.bradbury-v25-deployments.json
 deploy/.bradbury-v25-verification-state.json
+deploy/.bradbury-v25-preflight-state.json
 
 # Locally rendered demo media (keep the reproducible scripts and narration source)
 deliverables/demo-video/raw/
