@@ -216,13 +216,22 @@ async function finalize(client, accountValue, hash, label) {
   throw new Error(`${label} did not finalize`);
 }
 
-async function execute(client, state, key, label, request, expectError = false) {
+async function acceptWrite(client, state, key, label, request, expectError = false) {
   const hash = await checkpointWrite(client, state, key, label, request);
-  await waitResult(client, hash, label, expectError);
-  const record = await finalize(client, request.account, hash, label);
-  if (record.statusName !== "FINALIZED" || record.resultName !== "AGREE") throw new Error(`${label} did not finalize with AGREE`);
-  if (expectError !== /ERROR|REVERT|FAILED/.test(record.executionResultName)) throw new Error(`${label} final execution result mismatch`);
-  return record;
+  const record = await waitResult(client, hash, label, expectError);
+  return { record, request, expectError, label };
+}
+
+async function settleWrite(client, accepted) {
+  const { record: acceptedRecord, request, expectError, label } = accepted;
+  const finalRecord = await finalize(client, request.account, acceptedRecord.hash, label);
+  if (finalRecord.statusName !== "FINALIZED" || finalRecord.resultName !== "AGREE") throw new Error(`${label} did not finalize with AGREE`);
+  if (expectError !== /ERROR|REVERT|FAILED/.test(finalRecord.executionResultName)) throw new Error(`${label} final execution result mismatch`);
+  return finalRecord;
+}
+
+async function execute(client, state, key, label, request, expectError = false) {
+  return settleWrite(client, await acceptWrite(client, state, key, label, request, expectError));
 }
 
 async function read(client, address, functionName, args = []) {
@@ -265,7 +274,7 @@ async function createCampaign(client, state, verdict, sponsor, fields) {
 }
 
 async function releaseEvidence(client, state, escrow, tester, fields) {
-  await execute(client, state, `fund:${fields.key}`, `Fund ${fields.deal}`, {
+  await acceptWrite(client, state, `fund:${fields.key}`, `Fund ${fields.deal}`, {
     account: tester, address: escrow, functionName: "fund_deal",
     args: [fields.task, fields.deal, fields.recipient, fields.amount], value: fields.amount
   });
