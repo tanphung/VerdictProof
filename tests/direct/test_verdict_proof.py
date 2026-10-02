@@ -265,8 +265,9 @@ def submit(contract, direct_vm, direct_alice, cid, *, text=ARTIFACT, commit=COMM
     return sid
 
 
-def review(contract, direct_vm, sid, tester, *, result=None, receipt_kwargs=None, text=ARTIFACT):
-    mock_artifact(direct_vm, text)
+def review(contract, direct_vm, sid, tester, *, result=None, receipt_kwargs=None, text=ARTIFACT, commit=COMMIT):
+    mock_repo(direct_vm)
+    mock_artifact(direct_vm, text, commit=commit)
     mock_receipt(direct_vm, tester, **(receipt_kwargs or {}))
     direct_vm.mock_llm(r".*Evaluate all immutable artifact chunks independently.*", json.dumps(result or llm_result()))
     return contract.evaluate_submission(sid)
@@ -320,7 +321,7 @@ def test_repository_wrong_owner_and_redirect_are_rejected(direct_vm, direct_depl
 
 
 def test_github_rate_limit_is_transient_not_provenance_rejection(direct_vm, direct_deploy):
-    contract = direct_deploy(CONTRACT)
+    contract = direct_deploy("contracts/proof_provenance.py")
     module = sys.modules[type(contract).__module__]
     direct_vm.mock_web(
         r"^https://api\.github\.com/rate-limited$",
@@ -540,8 +541,79 @@ def test_capacity_exhaustion_reverts_before_fetch_or_consumption(direct_vm, dire
     assert contract.get_campaign(cid)["submission_count"] == 1
 
 
-def test_comparator_rejects_missing_obligation_and_threshold_side(direct_deploy):
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_reserved_rewards_survive_zero_available_pool_in_either_review_order(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_owner, reverse_order
+):
+    """Steward regression: valid testers cannot be slashed by review order."""
     contract = direct_deploy(CONTRACT)
+    cid = create_campaign(contract, direct_vm, pool=2 * REWARD)
+    first = submit(contract, direct_vm, direct_alice, cid)
+    second = submit(contract, direct_vm, direct_bob, cid, commit=COMMIT_2,
+                    tx_url=f"https://explorer-bradbury.genlayer.com/tx/{TX_HASH_2}")
+    campaign = contract.get_campaign(cid)
+    assert campaign["reward_pool"] == "0"
+    assert campaign["reserved_reward_pool"] == str(2 * REWARD)
+    rows = [(first, direct_alice, COMMIT, TX_HASH), (second, direct_bob, COMMIT_2, TX_HASH_2)]
+    for index, (sid, tester, commit, tx_hash) in enumerate(reversed(rows) if reverse_order else rows):
+        direct_vm.clear_mocks()
+        result = review(contract, direct_vm, sid, contract.get_submission(sid)["tester"],
+                        commit=commit, receipt_kwargs={"tx_hash": tx_hash})
+        assert result["status"] == "APPROVED"
+        assert result["reserved_reward_amount"] == str(REWARD)
+        assert result["reward_amount"] == str(REWARD)
+        assert result["reservation_status"] == "CONSUMED"
+        campaign = contract.get_campaign(cid)
+        assert campaign["reward_pool"] == "0"
+        assert campaign["reserved_reward_pool"] == str((1 - index) * REWARD)
+        assert campaign["rejected_count"] == 0
+    direct_vm.sender = direct_owner
+    closed = contract.close_campaign(cid)
+    assert closed["amount_atto"] == "0"
+    for sid, tester, _, _ in rows:
+        direct_vm.sender = tester
+        assert contract.claim_reward(sid)["paid_atto"] == str(STAKE + REWARD)
+        with direct_vm.expect_revert("not claimable"):
+            contract.claim_reward(sid)
+
+
+@pytest.mark.parametrize("duplicate_kind", ["transaction", "artifact"])
+def test_evidence_cannot_be_reused_across_campaigns_and_failure_is_atomic(
+    direct_vm, direct_deploy, direct_alice, direct_bob, duplicate_kind
+):
+    contract = direct_deploy(CONTRACT)
+    first_campaign = create_campaign(contract, direct_vm)
+    second_campaign = create_campaign(contract, direct_vm)
+    submit(contract, direct_vm, direct_alice, first_campaign)
+    before = contract.get_campaign(second_campaign)
+    commit = COMMIT_2 if duplicate_kind == "transaction" else COMMIT
+    tx_url = TX_URL + "?tracking=other#proof" if duplicate_kind == "transaction" else f"https://explorer-bradbury.genlayer.com/tx/{TX_HASH_2}"
+    usage_before = contract.get_evidence_usage(second_campaign, tx_url, commit)
+    with direct_vm.expect_revert(f"{duplicate_kind} evidence has already been consumed"):
+        submit(contract, direct_vm, direct_bob, second_campaign, commit=commit, tx_url=tx_url)
+    assert contract.get_campaign(second_campaign) == before
+    assert contract.get_evidence_usage(second_campaign, tx_url, commit) == usage_before
+    assert contract.list_campaign_submissions(second_campaign)["count"] == 0
+
+
+def test_capacity_revert_preserves_unused_references_and_existing_reservation(
+    direct_vm, direct_deploy, direct_alice, direct_bob
+):
+    contract = direct_deploy(CONTRACT)
+    cid = create_campaign(contract, direct_vm, pool=10**17, reward=10**17)
+    sid = submit(contract, direct_vm, direct_alice, cid)
+    tx_url = f"https://explorer-bradbury.genlayer.com/tx/{TX_HASH_2}"
+    before = contract.get_campaign(cid)
+    existing = contract.get_submission(sid)
+    with direct_vm.expect_revert("no unreserved reward capacity"):
+        submit(contract, direct_vm, direct_bob, cid, commit=COMMIT_2, tx_url=tx_url)
+    assert contract.get_evidence_usage(cid, tx_url, COMMIT_2)["available"] is True
+    assert contract.get_campaign(cid) == before
+    assert contract.get_submission(sid) == existing
+
+
+def test_comparator_rejects_missing_obligation_and_threshold_side(direct_deploy):
+    contract = direct_deploy("contracts/proof_review.py")
     module = sys.modules[type(contract).__module__]
     left = llm_result()
     left.update({"all_obligations_satisfied": True, "usage_valid": True, "approved": True, "score": 88})
@@ -554,7 +626,7 @@ def test_comparator_rejects_missing_obligation_and_threshold_side(direct_deploy)
 
 
 def test_artifact_comparator_rejects_missing_reordered_or_changed_chunks(direct_deploy):
-    contract = direct_deploy(CONTRACT)
+    contract = direct_deploy("contracts/proof_provenance.py")
     module = sys.modules[type(contract).__module__]
     chunks, digests = module._chunks(ARTIFACT)
     artifact = {
@@ -585,3 +657,50 @@ def test_artifact_comparator_rejects_missing_reordered_or_changed_chunks(direct_
     changed = copy.deepcopy(artifact)
     changed["sha256"] = "0" * 64
     assert module._artifact_equal(artifact, changed) is False
+
+
+@pytest.mark.parametrize("difference", ["none", "receipt", "artifact", "obligation", "threshold"])
+def test_validator_independently_reruns_evidence_and_semantics(
+    direct_vm, direct_deploy, direct_alice, difference
+):
+    """Invoke the actual captured validator callback with independent inputs."""
+    contract = direct_deploy(CONTRACT)
+    cid = create_campaign(contract, direct_vm)
+    sid = submit(contract, direct_vm, direct_alice, cid)
+    tester = contract.get_submission(sid)["tester"]
+    review(contract, direct_vm, sid, tester)
+    direct_vm.clear_mocks()
+    mock_repo(direct_vm)
+    mock_artifact(direct_vm, ARTIFACT + " changed" if difference == "artifact" else ARTIFACT)
+    mock_receipt(direct_vm, tester, call=calldata(task_identifier="OTHER") if difference == "receipt" else None)
+    result = llm_result(violated=["OBL-002"] if difference == "obligation" else [])
+    if difference == "threshold":
+        result.update(feedback_score=5, insight_score=4, originality_score=3)
+    direct_vm.mock_llm(r".*Evaluate all immutable artifact chunks independently.*", json.dumps(result))
+    assert all(direct_vm.run_validator(index=index) for index in (-3, -2, -1)) is (difference == "none")
+
+
+@pytest.mark.parametrize("helper,value", [
+    ("_commit", "a" * 41), ("_commit", "+" + "a" * 39),
+    ("_sha256", "a" * 65), ("_sha256", "a" * 63 + "\n"),
+    ("_method", "release" + "_" * 64),
+])
+def test_identity_fields_reject_truncation(direct_vm, direct_deploy, helper, value):
+    contract = direct_deploy("contracts/proof_provenance.py")
+    module = sys.modules[type(contract).__module__]
+    with direct_vm.expect_revert("[EXPECTED]"):
+        getattr(module, helper)(value)
+
+
+def test_repository_identity_rechecked_before_consuming_evidence(direct_vm, direct_deploy, direct_alice):
+    contract = direct_deploy(CONTRACT)
+    cid = create_campaign(contract, direct_vm)
+    before = contract.get_campaign(cid)
+    direct_vm.clear_mocks()
+    direct_vm.mock_web(r"^https://api\.github\.com/repos/tanphung/VerdictProof$", {
+        "status": 200, "body": json.dumps({"id": 99999, "node_id": "R_replacement",
+        "name": "VerdictProof", "full_name": "tanphung/VerdictProof",
+        "owner": {"login": "tanphung", "id": 6789}})})
+    with direct_vm.expect_revert("GitHub repository identity changed"):
+        submit(contract, direct_vm, direct_alice, cid)
+    assert contract.get_campaign(cid) == before

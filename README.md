@@ -1,5 +1,7 @@
 # VerdictProof
 
+> V2.6 split-contract candidate: three immutable helper contracts and a settlement core. The helpers are finalized on Bradbury; the new core deployment is accepted and awaiting finality. 126 direct parity tests, StudioNet approval integration, 36 frontend tests and build passed. See `deploy/v2.6-release-status.json`. The public runtime remains the historical release until the new workflow is verified.
+
 [![CI](https://github.com/tanphung/VerdictProof/actions/workflows/ci.yml/badge.svg)](https://github.com/tanphung/VerdictProof/actions/workflows/ci.yml)
 
 **Product-testing campaigns settled by independent GenLayer validation.**
@@ -22,13 +24,13 @@ VerdictProof is a controlled public pilot with real on-chain workflows. The veri
 | Submission and demo notes | [SUBMISSION.md](SUBMISSION.md) |
 | License | [MIT](LICENSE) |
 
-The V2.3 deployment reached `FINALIZED / AGREE / FINISHED_WITH_RETURN` with 5/5 recorded votes. Its deployed source and generated schema match this repository. The canonical source SHA-256 is:
+The V2.3 deployment reached `FINALIZED / AGREE / FINISHED_WITH_RETURN` with 5/5 recorded votes. Its historical source and schema attestation are preserved in the published artifact; current contract source is the V2.6 candidate. The canonical source SHA-256 is:
 
 ```text
 5c5624351a4de6f1e79c58ce7595b7837053b03128637e7cfbf7e95776da4d33
 ```
 
-> Release status: the repository is preparing the V2.4 steward remediation described below. The public app remains pinned to the verified V2.3 deployment until V2.4 passes StudioNet and Bradbury verification; no unverified address is presented as the live release.
+> Release status: V2.6 is undergoing fresh Bradbury workflow verification. See [steward remediation](docs/STEWARD_REMEDIATION.md) and [split architecture](docs/V2_6_ARCHITECTURE.md).
 
 ## The Trust Problem
 
@@ -63,7 +65,7 @@ flowchart LR
   H --> I[Remaining pool refunded]
 ```
 
-## Independent Validation
+## Independent Validation in the V2.6 Candidate
 
 Every review separates objective evidence gates from semantic judgment.
 
@@ -75,13 +77,14 @@ Every review separates objective evidence gates from semantic judgment.
 - The receipt recipient must exactly match the campaign's expected recipient.
 - The decoded GenLayer method must exactly match the campaign's expected method.
 - An exact decoded calldata argument or kwarg must match the campaign task identifier.
-- The outcome URL must use the campaign product origin.
+- The deal, beneficiary, integer amount, release kind and released flag must match the campaign policy.
+- The complete GitHub artifact must match the accepted repository identity, immutable commit/path, byte length and SHA-256 manifest.
 
-Execution, identity, recipient, method, task-identifier, or product-origin failure takes the hard-gate path without rendering the outcome. These facts are derived from the Bradbury receipt and decoded calldata, not accepted from an LLM response.
+Receipt facts are derived from Bradbury RPC and decoded calldata. A failed receipt gate forces the proof score to zero and prevents approval. Every semantic evaluation reviews the complete authenticated artifact, including every chunk and campaign obligation.
 
 ### Semantic review
 
-When the receipt and identity gates pass, every node independently renders the public outcome and evaluates:
+The leader and validators independently fetch the receipt and immutable artifact and evaluate:
 
 - task completion and proof quality: 40 points;
 - feedback specificity and grounding: 25 points;
@@ -119,7 +122,7 @@ The frontend:
 
 - Campaign funding and tester stake must exactly match `gl.message.value` in integer attoGEN.
 - A submission can be evaluated only while pending.
-- Transaction hashes and canonical outcome URLs are globally consumed when a submission is accepted.
+- Transaction hashes and canonical immutable artifact keys are globally consumed when a submission is accepted.
 - One reward is moved from available pool to pending reservation at submission acceptance.
 - Approval consumes the reservation without reading the later available pool balance.
 - Rejection releases the reservation and adds the slashed stake to the available pool.
@@ -142,7 +145,7 @@ The approved tester claimed a `0.02 GEN` stake plus `0.04 GEN` reward. The spons
 
 The artifact contains public addresses, transaction hashes, verdict fields, and execution metadata only. Its secret scan contains no private key, mnemonic, password, or API key.
 
-## Verified Quality Gates
+## Historical V2.3 Quality Gates
 
 | Gate | Latest verified result |
 | --- | --- |
@@ -157,16 +160,20 @@ The artifact contains public addresses, transaction hashes, verdict fields, and 
 
 GitHub Actions runs release-artifact integrity checks, GenVM lint, direct contract tests, the frontend audit, TypeScript checks, tests, and production build on every pull request and push to `main`. StudioNet consensus testing is available as the manual **StudioNet Integration** workflow after configuring the `STUDIONET_ACCOUNT_PRIVATE_KEY` and `STUDIONET_APPROVED_TESTER_PRIVATE_KEY` repository secrets. Bradbury multi-wallet writes remain an explicit release procedure so CI never holds Bradbury wallet secrets or creates unintended transactions.
 
-The pinned GenVM runner is intentionally retained because it matches the deployed and verified contract source. A newer runner notification alone is not treated as a reason to change the release.
+These counts describe the prior release. Current remediation checks and outstanding network gates are recorded in [the remediation document](docs/STEWARD_REMEDIATION.md). Set `GENVM_VERSION=v0.3.0-rc7` for reproducible linting with the pinned contract SDK.
 
 ## Architecture
 
 ```text
-contracts/verdict_proof.py           Intelligent Contract and settlement logic
+contracts/verdict_proof.py           Atomic escrow, evidence consumption, and settlement
+contracts/proof_provenance.py        Immutable policy and complete GitHub artifact checks
+contracts/proof_receipt.py           Independent finalized receipt and calldata checks
+contracts/proof_review.py            Independent semantic review and score comparison
 tests/direct/                        Contract state, validation, and authorization tests
 tests/integration/                   StudioNet leader + validator consensus test
 frontend/src/                        React dApp and GenLayerJS integration
-frontend/public/evidence/            Public outcome evidence used by the Bradbury pilot
+frontend/public/evidence/            Legacy V2.3 public outcome evidence
+evidence/v2.5/                       Immutable artifact fixtures for the candidate
 frontend/scripts/                    Restart-safe multi-wallet verification runner
 deploy/latest-bradbury-verification.json
                                      Public release proof
@@ -197,10 +204,10 @@ cd frontend
 npm ci
 ```
 
-Configure the deployed contract in `frontend/.env`:
+`frontend/public/config.js` takes precedence over `frontend/.env` and remains on the previous release until promotion. The V2.6 frontend refuses incompatible V2.3 contract reads/writes. Update the runtime address, rubric and review mappings together after verification. The environment fallback uses these fields:
 
 ```env
-VITE_VERDICTPROOF_CONTRACT_ADDRESS=0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed
+VITE_VERDICTPROOF_CONTRACT_ADDRESS=<verified-V2.6-address>
 VITE_VERDICTPROOF_CHAIN=bradbury
 VITE_GENLAYER_EXPLORER=https://explorer-bradbury.genlayer.com
 ```
@@ -218,7 +225,7 @@ From the repository root:
 
 ```bash
 genvm-lint check contracts/verdict_proof.py --json
-pytest tests/direct/ -v
+python -m pytest -p no:gltest tests/direct/ -v
 gltest tests/integration/ -v -s --network studionet
 ```
 
@@ -227,6 +234,7 @@ From `frontend/`:
 ```bash
 npx tsc --noEmit --noUnusedLocals --noUnusedParameters -p tsconfig.json
 npm test -- --run
+npm run test:verification
 npm audit --omit=dev
 npm run build
 ```
@@ -238,12 +246,12 @@ cd frontend
 npm run verify:bradbury
 ```
 
-The runner is checkpointed for safe resume and writes the public artifact only after all required transactions and finalized state checks succeed. Private keys remain local and are never written to the artifact.
+The runner checkpoints broadcasts and writes `deploy/v2.6-bradbury-verification.json` only after all required transactions and finalized state checks succeed. It does not replace the V2.3 release artifact or change frontend configuration. Private keys remain local. See [deploy notes](deploy/README.md) for commit arguments and the real 24-hour expiry checkpoint.
 
 ## Scope and Limitations
 
 - This release is a controlled Bradbury pilot, not evidence of external adoption.
-- Outcome URLs are public web evidence and can change after review; the finalized report records what consensus accepted at review time.
+- V2.3 used mutable outcome URLs. V2.6 binds the complete artifact to a GitHub commit/path and SHA-256 manifest; GitHub and Bradbury RPC remain authoritative external data sources.
 - Validator narrative transcripts are not exposed by the network. VerdictProof displays the committed leader report and independently verified consensus metadata.
 - The current release focuses on one workflow: sponsor funding, tester evidence, independent review, reward or slash, claim, and close/refund.
 - VerdictProof is submitted as a complete Project, not as a duplicate extracted Intelligent Contract contribution.

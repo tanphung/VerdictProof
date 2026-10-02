@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,16 +12,17 @@ const EXPLORER = "https://explorer-bradbury.genlayer.com";
 const APP_URL = "https://verdictproof.vercel.app/";
 const ATTO = 10n ** 18n;
 const INITIAL_VALIDATORS = 5n;
-const RUBRIC = "VERDICTPROOF_V2_5_FULL_ASSURANCE";
+const RUBRIC = "VERDICTPROOF_V2_6_STEWARD_REMEDIATION";
 const ARTIFACT_COMMIT = String(process.argv[2] ?? "").toLowerCase();
-const LEGACY_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-v25-verification-state.json");
+const LEGACY_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-v26-verification-state.json");
 const STATE_PATH = existsSync(LEGACY_STATE_PATH) && JSON.parse(readFileSync(LEGACY_STATE_PATH, "utf8")).artifactCommit === ARTIFACT_COMMIT
-  ? LEGACY_STATE_PATH : resolve(ROOT, "deploy", `.bradbury-v25-${ARTIFACT_COMMIT}-verification-state.json`);
-const PREFLIGHT_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-v25-preflight-state.json");
-const DEPLOYMENTS_PATH = resolve(ROOT, "deploy", ".bradbury-v25-deployments.json");
-const PUBLIC_ARTIFACT = resolve(ROOT, "deploy", "v2.5-bradbury-verification.json");
+  ? LEGACY_STATE_PATH : resolve(ROOT, "deploy", `.bradbury-v26-${ARTIFACT_COMMIT}-verification-state.json`);
+const PREFLIGHT_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-v26-preflight-state.json");
+const DEPLOYMENTS_PATH = resolve(ROOT, "deploy", ".bradbury-v26-deployments.json");
+const PUBLIC_ARTIFACT = resolve(ROOT, "deploy", "v2.6-bradbury-verification.json");
 const MODE = String(process.argv[3] ?? "verify");
-const SECONDARY_COMMIT = String(process.env.VERDICTPROOF_V25_SECONDARY_COMMIT ?? "").toLowerCase();
+const pendingWrites = [];
+const SECONDARY_COMMIT = String(process.env.VERDICTPROOF_V26_SECONDARY_COMMIT ?? "").toLowerCase();
 
 const publicClient = createPublicClient({
   chain: testnetBradbury,
@@ -254,11 +255,20 @@ async function settleWrite(client, accepted) {
 }
 
 async function execute(client, state, key, label, request, expectError = false) {
-  return settleWrite(client, await acceptWrite(client, state, key, label, request, expectError));
+  const accepted = await acceptWrite(client, state, key, label, request, expectError);
+  if (MODE !== "verify") return settleWrite(client, accepted);
+  pendingWrites.push(accepted);
+  return accepted.record;
 }
 
-async function read(client, address, functionName, args = []) {
-  return client.readContract({ address, functionName, args, transactionHashVariant: "latest-final" });
+async function finalizeBatch(client) {
+  for (const accepted of pendingWrites) Object.assign(accepted.record, await settleWrite(client, accepted));
+  pendingWrites.length = 0;
+}
+
+export async function read(client, address, functionName, args = [], finalized = MODE !== "verify") {
+  return client.readContract({ address, functionName, args,
+    transactionHashVariant: finalized ? "latest-final" : "latest-nonfinal" });
 }
 
 async function findCampaign(client, verdict, title) {
@@ -324,6 +334,7 @@ function artifact(path) {
 }
 
 async function submit(client, state, verdict, tester, campaign, evidence, file, feedback, key, expectError = false, commit = ARTIFACT_COMMIT) {
+  const campaignBefore = await read(client, verdict, "get_campaign", [BigInt(campaign.campaign_id)]);
   const before = await read(client, verdict, "get_evidence_usage", [BigInt(campaign.campaign_id), txUrl(evidence.hash), commit]);
   const record = await execute(client, state, `submit:${key}`, `Submit ${key}`, {
     account: tester, address: verdict, functionName: "submit_proof",
@@ -333,7 +344,18 @@ async function submit(client, state, verdict, tester, campaign, evidence, file, 
   const after = await read(client, verdict, "get_evidence_usage", [BigInt(campaign.campaign_id), txUrl(evidence.hash), commit]);
   if (expectError) {
     if (compact(canonical(normalized(before))) !== compact(canonical(normalized(after)))) throw new Error(`${key} expected rejection changed evidence usage`);
-    return { record, before, after };
+    const campaignAfter = await read(client, verdict, "get_campaign", [BigInt(campaign.campaign_id)]);
+    if (compact(canonical(normalized(campaignBefore))) !== compact(canonical(normalized(campaignAfter)))) throw new Error(`${key} expected rejection changed campaign accounting`);
+    const expectedReason = { duplicateTx: "transaction evidence has already been consumed", duplicateArtifactB: "artifact evidence has already been consumed", capacitySecond: "campaign has no unreserved reward capacity" }[key];
+    if (!expectedReason) throw new Error(`Missing expected revert reason for ${key}`);
+    const tx = await client.getTransaction({ hash: record.hash });
+    const trace = await client.debugTraceTransaction({ hash: record.hash, round: Number(tx.lastRound?.round ?? 0) });
+    const result = normalized(genlayerAbi.calldata.decode(Buffer.from(trace.return_data.slice(2), "hex")));
+    if (result.kind === "Return" || typeof result.data !== "string" || !result.data.includes(`[EXPECTED] ${expectedReason}`)) throw new Error(`${key} did not revert for its expected contract guard: ${compact(result.data)}`);
+    state.failedSubmissions ??= {};
+    state.failedSubmissions[key] ??= normalized({ before, after, campaignBefore, campaignAfter, expectedReason, observedReason: result.data });
+    saveState(state);
+    return { ...state.failedSubmissions[key], record };
   }
   if (after.available) throw new Error(`${key} did not consume evidence atomically`);
   const submission = await read(client, verdict, "get_submission", [BigInt(after.transaction_submission_id)]);
@@ -367,25 +389,87 @@ async function main() {
   const deployments = loadJson(DEPLOYMENTS_PATH, { deployments: {} }).deployments;
   const verdictDeployment = deployments["contracts/verdict_proof.py"];
   const escrowDeployment = deployments["contracts/evidence_escrow.py"];
-  if (!escrowDeployment) throw new Error("Deploy the V2.5 evidence escrow before verification");
+  if (!escrowDeployment) throw new Error("Deploy the V2.6 evidence escrow before verification");
   const escrow = escrowDeployment.contractAddress;
   const client = createClient({ chain: testnetBradbury });
+  const preflight = loadJson(PREFLIGHT_STATE_PATH, { releaseId: new Date().toISOString().slice(0, 10).replaceAll("-", ""), escrow, transactions: {} });
+  preflight._checkpointPath = PREFLIGHT_STATE_PATH;
+  if (preflight.escrow.toLowerCase() !== escrow.toLowerCase()) throw new Error("Preflight escrow mismatch");
+  const suffix = preflight.releaseId;
+  const scenarios = Object.fromEntries([
+    ["approved", "steward-approved.md"], ["binding", "binding-rejection.md"],
+    ["semantic", "semantic-rejection.md"], ["duplicateTx", "duplicate-transaction.md"],
+    ["duplicateArtifactA", "duplicate-artifact.md"], ["duplicateArtifactB", "duplicate-artifact.md"],
+    ["capacity", "capacity.md"], ["expiry", "expiry.md"],
+  ].map(([key, file]) => [key, { key, title: `V2.6 ${key} ${suffix}`, path: `evidence/v2.6/${file}`,
+    task: `VP26-${key}-${suffix}`, deal: `DEAL-${key}-${suffix}` }]));
   if (MODE === "prepare") {
-    let preflight = loadJson(PREFLIGHT_STATE_PATH, { artifactCommit: ARTIFACT_COMMIT, escrow, transactions: {} });
-    preflight._checkpointPath = PREFLIGHT_STATE_PATH;
-    if (preflight.artifactCommit !== ARTIFACT_COMMIT || preflight.escrow.toLowerCase() !== escrow.toLowerCase()) throw new Error("Preflight checkpoint belongs to another release");
-    const release = await releaseEvidence(client, preflight, escrow, approved, {
-      key: "studionetPreflight", task: `VP25-STUDIONET-${ARTIFACT_COMMIT.slice(0, 8)}`,
-      deal: `DEAL-STUDIONET-${ARTIFACT_COMMIT.slice(0, 8)}`, recipient: rejected.address, amount: gen(0.001)
-    });
-    console.log(JSON.stringify({ escrow, releaseTransaction: release.hash, transactionUrl: txUrl(release.hash) }));
+    preflight.evidence ??= {};
+    const acceptedReleases = [];
+    for (const scenario of [...Object.values(scenarios), {
+      key: "bindingActual", task: `VP26-WRONG-${suffix}`, deal: `DEAL-WRONG-${suffix}`,
+    }]) {
+      await acceptWrite(client, preflight, `fund:${scenario.key}`, `Fund ${scenario.deal}`, {
+        account: approved, address: escrow, functionName: "fund_deal",
+        args: [scenario.task, scenario.deal, rejected.address, gen(0.001)], value: gen(0.001)
+      });
+      acceptedReleases.push([scenario.key, await acceptWrite(client, preflight, `release:${scenario.key}`, `Release ${scenario.deal}`, {
+        account: approved, address: escrow, functionName: "release",
+        args: [scenario.task, scenario.deal, rejected.address, gen(0.001), "RELEASE", true]
+      })]);
+    }
+    for (const [key, accepted] of acceptedReleases) {
+      preflight.evidence[key] = await settleWrite(client, accepted);
+      saveState(preflight);
+    }
+    mkdirSync(resolve(ROOT, "evidence/v2.6"), { recursive: true });
+    for (const scenario of Object.values(scenarios)) {
+      if (scenario.key === "duplicateArtifactB") continue;
+      const actual = scenario.key === "binding" ? {
+        task: `VP26-WRONG-${suffix}`, deal: `DEAL-WRONG-${suffix}`,
+      } : scenario;
+      const receipt = preflight.evidence[scenario.key === "binding" ? "bindingActual" : scenario.key];
+      let body = `# VerdictProof V2.6 ${scenario.key}\n\n` +
+        `OBL-001: Finalized escrow release\nTransaction: ${txUrl(receipt.hash)}\n` +
+        `Sender: ${approved.address}\nSource contract: ${escrow}\nMethod: release\n` +
+        `task_identifier: ${actual.task}\ndeal_id: ${actual.deal}\nrecipient: ${rejected.address}\n` +
+        `amount_atto: 1000000000000000\nkind: RELEASE\nreleased: true\n` +
+        `The escrow releases this funded amount to the beneficiary. The source contract and beneficiary are different addresses.\n\n` +
+        `OBL-002: Immutable artifact verification\nGitHub resolves this file at a full commit SHA. ` +
+        `The contract decodes every byte, checks byte length and full SHA-256 against the declared submission, ` +
+        `splits the UTF-8 text into ordered chunks of at most 1024 bytes, and records all chunk digests. ` +
+        `Every validator independently retrieves and evaluates all chunks, including the final chunk; ` +
+        `a matching prefix does not authenticate the rest of the document.\n\n`;
+      if (["approved", "binding", "duplicateTx", "expiry"].includes(scenario.key)) {
+        body += `OBL-003: Reservation and settlement rules\nAcceptance moves one reward from available to reserved. ` +
+          `Approval consumes that submission's reservation even when available rewards are zero. ` +
+          `The approved tester can claim exactly reward plus stake once. Rejection releases the reservation ` +
+          `and slashes the stake; expiry refunds stake and releases the reservation. Closure requires no pending ` +
+          `submissions and no reservations; approved claims remain payable after closure. These are contract ` +
+          `rules, not a claim that this case has already been reviewed or paid.\n`;
+      } else {
+        body += `This negative fixture deliberately contains no explanation of reward reservation or settlement accounting.\n`;
+      }
+      writeFileSync(resolve(ROOT, scenario.path), body, "utf8");
+    }
+    console.log("Fresh finalized receipt fixtures written. Commit and push evidence/v2.6 before verify.");
     return;
   }
-  if (!verdictDeployment) throw new Error("Deploy VerdictProof V2.5 before full verification");
-  if (!/^[0-9a-f]{40}$/.test(SECONDARY_COMMIT) || SECONDARY_COMMIT === ARTIFACT_COMMIT) throw new Error("Set VERDICTPROOF_V25_SECONDARY_COMMIT to a second immutable commit containing the same capacity artifact");
+  if (MODE !== "inspect" && !preflight.evidence?.approved) throw new Error("Run prepare before verification");
+  if (!verdictDeployment) throw new Error("Deploy VerdictProof V2.6 before full verification");
+  if (MODE !== "inspect" && (!/^[0-9a-f]{40}$/.test(SECONDARY_COMMIT) || SECONDARY_COMMIT === ARTIFACT_COMMIT)) throw new Error("Set VERDICTPROOF_V26_SECONDARY_COMMIT to a second immutable commit containing the same capacity artifact");
   const verdict = verdictDeployment.contractAddress;
   const deploymentVerification = {};
-  for (const deployment of [verdictDeployment, escrowDeployment]) {
+  const helperDeployments = ["proof_provenance", "proof_receipt", "proof_review"].map((name) => {
+    const record = deployments[`contracts/${name}.py`];
+    if (!record?.contractAddress) throw new Error(`Missing ${name} deployment`);
+    return record;
+  });
+  const components = await read(client, verdict, "get_components");
+  for (const [index, key] of ["provenance", "receipt", "reviewer"].entries()) {
+    if (String(components[key]).toLowerCase() !== helperDeployments[index].contractAddress.toLowerCase()) throw new Error(`Core ${key} address mismatch`);
+  }
+  for (const deployment of [verdictDeployment, escrowDeployment, ...helperDeployments]) {
     const local = readFileSync(resolve(ROOT, deployment.contractFile), "utf8");
     const deployed = await client.getContractCode(deployment.contractAddress);
     if (local !== deployed || createHash("sha256").update(local).digest("hex") !== deployment.sourceSha256) throw new Error(`${deployment.contractFile} deployed source mismatch`);
@@ -403,16 +487,15 @@ async function main() {
       stats: normalized(await read(client, verdict, "get_stats")),
       note: "Read-only deployment inspection. This is not submission/review/settlement verification."
     };
-    const path = resolve(ROOT, "deploy", "v2.5-deployment-check.json");
+    const path = resolve(ROOT, "deploy", "v2.6-deployment-check.json");
     writeFileSync(path, `${JSON.stringify(inspection, null, 2)}\n`, "utf8");
     console.log(`Deployment source/schema and finality checked: ${path}`);
     return;
   }
   let state = loadJson(STATE_PATH, { artifactCommit: ARTIFACT_COMMIT, secondaryCommit: SECONDARY_COMMIT, verdict, escrow, transactions: {} });
   state._checkpointPath = STATE_PATH;
-  if (state.artifactCommit !== ARTIFACT_COMMIT || state.secondaryCommit !== SECONDARY_COMMIT || state.verdict.toLowerCase() !== verdict.toLowerCase() || state.escrow.toLowerCase() !== escrow.toLowerCase()) throw new Error("V2.5 checkpoint belongs to a different immutable release");
+  if (state.artifactCommit !== ARTIFACT_COMMIT || state.secondaryCommit !== SECONDARY_COMMIT || state.verdict.toLowerCase() !== verdict.toLowerCase() || state.escrow.toLowerCase() !== escrow.toLowerCase()) throw new Error("V2.6 checkpoint belongs to a different immutable release");
   saveState(state);
-  const suffix = ARTIFACT_COMMIT.slice(0, 8);
   const amount = gen(0.001);
   const stake = gen(0.01);
   const reward = gen(0.02);
@@ -422,43 +505,21 @@ async function main() {
     { id: "OBL-002", text: "Document complete immutable artifact verification and chunk coverage." },
     { id: "OBL-003", text: "Document reward reservation and settlement accounting." }
   ];
-  const scenarios = {
-    approved: { key: "approved", title: `V2.5 Full Assurance Approval ${suffix}`, path: "evidence/v2.5/steward-approved.md", task: "VP25-STUDIONET-2facfe26", deal: "DEAL-STUDIONET-2facfe26" },
-    binding: { key: "binding", title: `V2.5 Exact Binding Rejection ${suffix}`, path: "evidence/v2.5/binding-rejection.md", task: `VP25-BIND-${suffix}`, deal: `DEAL-BIND-${suffix}` },
-    semantic: { key: "semantic", title: `V2.5 Obligation Rejection ${suffix}`, path: "evidence/v2.5/semantic-rejection.md", task: `VP25-SEMANTIC-${suffix}`, deal: `DEAL-SEMANTIC-${suffix}` },
-    duplicateTx: { key: "duplicateTx", title: `V2.5 Duplicate Transaction ${suffix}`, path: "evidence/v2.5/duplicate-transaction.md", task: `VP25-DUP-TX-${suffix}`, deal: `DEAL-DUP-TX-${suffix}` },
-    duplicateArtifactA: { key: "duplicateArtifactA", title: `V2.5 Artifact Consumption A ${suffix}`, path: "evidence/v2.5/duplicate-artifact.md", task: `VP25-DUP-ART-A-${suffix}`, deal: `DEAL-DUP-ART-A-${suffix}` },
-    duplicateArtifactB: { key: "duplicateArtifactB", title: `V2.5 Artifact Consumption B ${suffix}`, path: "evidence/v2.5/duplicate-artifact.md", task: `VP25-DUP-ART-B-${suffix}`, deal: `DEAL-DUP-ART-B-${suffix}` },
-    capacity: { key: "capacity", title: `V2.5 Atomic Capacity ${suffix}`, path: "evidence/v2.5/capacity.md", task: `VP25-CAPACITY-${suffix}`, deal: `DEAL-CAPACITY-${suffix}` },
-    expiry: { key: "expiry", title: `V2.5 Deterministic Expiry ${suffix}`, path: "evidence/v2.5/expiry.md", task: `VP25-EXPIRY-${suffix}`, deal: `DEAL-EXPIRY-${suffix}` }
-  };
   const campaigns = {};
   for (const scenario of Object.values(scenarios)) {
     campaigns[scenario.key] = await createCampaign(client, state, verdict, sponsor, {
-      ...scenario, escrow, recipient: rejected.address, amount, pool,
+      ...scenario, deal: scenario.key === "binding" ? `DEAL-WRONG-${suffix}` : scenario.deal, escrow, recipient: rejected.address, amount, pool,
       reward: ["capacity", "approved"].includes(scenario.key) ? pool : reward, stake,
       obligations: baseObligations,
       instruction: "Complete the exact funded escrow release and document every accepted obligation in the immutable artifact.",
       proof: "Finalized Bradbury release receipt plus authenticated full-content GitHub artifact."
     });
   }
-  const evidence = {};
-  for (const scenario of Object.values(scenarios)) {
-    if (scenario.key === "approved") {
-      const hash = "0x52ab9f5256ce034ad2ba7c132f783ec1fcf4ee1d9eb89ed120efcd182790c738";
-      evidence.approved = snapshot(await client.getTransaction({ hash }), hash);
-      if (evidence.approved.statusName !== "FINALIZED" || !expectedExecution(evidence.approved)) throw new Error("Documented approval receipt is not finalized successfully");
-      continue;
-    }
-    evidence[scenario.key] = await releaseEvidence(client, state, escrow, approved, { ...scenario, recipient: rejected.address, amount });
-  }
-  const bindingActual = await releaseEvidence(client, state, escrow, approved, {
-    key: "bindingActual", task: `VP25-BIND-WRONG-${suffix}`, deal: `DEAL-BIND-WRONG-${suffix}`,
-    recipient: rejected.address, amount
-  });
+  const evidence = preflight.evidence;
+  const bindingActual = evidence.bindingActual;
   const files = Object.fromEntries(Object.values(scenarios).map((item) => [item.key, artifact(item.path)]));
-  const approvedSubmission = await submit(client, state, verdict, approved, campaigns.approved.campaign, evidence.approved, files.approved, "I verified three linked controls: the finalized release calldata contains the exact task, deal, recipient, amount, kind and released state; the GitHub manifest covers every byte with ordered chunk digests; and reward capacity is reserved before review. The report should keep the exact mismatched field beside each gate and warn about consumed evidence before wallet signing. Those changes would shorten receipt debugging without weakening contract enforcement.", "approved");
-  const bindingSubmission = await submit(client, state, verdict, approved, campaigns.binding.campaign, bindingActual, files.binding, "This genuine finalized release intentionally belongs to a different task and deal and must fail exact binding.", "binding");
+  const approvedSubmission = await submit(client, state, verdict, approved, campaigns.approved.campaign, evidence.approved, files.approved, "OBL-001 documents both the escrow destination and a different beneficiary. Label these addresses separately in an expected/actual table beside each failed gate; one generic recipient label makes a correct release look mismatched. OBL-002 describes both a full SHA-256 and ordered chunk digests. Show the full digest plus reviewed/total chunks in the report: a matching first chunk would hide a contradictory tail. OBL-003 says approval consumes a reservation independently of the available pool. Display available and reserved rewards separately and warn before signing when no slot remains. Otherwise a zero available balance misleadingly looks insolvent even when every pending reward is funded. Together these changes expose attribution, content integrity and payout capacity as three separately inspectable facts instead of one ambiguous success badge.", "approved");
+  const bindingSubmission = await submit(client, state, verdict, approved, campaigns.binding.campaign, bindingActual, files.binding, "This genuine finalized release intentionally belongs to a different task. All other receipt fields match the campaign; only task binding must fail.", "binding");
   const semanticSubmission = await submit(client, state, verdict, approved, campaigns.semantic.campaign, evidence.semantic, files.semantic, "The receipt matches, but the complete artifact deliberately omits the required settlement-accounting obligation.", "semantic");
   const duplicateTx = await submit(client, state, verdict, approved, campaigns.duplicateTx.campaign, evidence.approved, files.duplicateTx, "The transaction was already consumed and this atomic submission must fail.", "duplicateTx", true);
   const duplicateFirst = await submit(client, state, verdict, approved, campaigns.duplicateArtifactA.campaign, evidence.duplicateArtifactA, files.duplicateArtifactA, "This first use consumes the immutable artifact key.", "duplicateArtifactA");
@@ -474,13 +535,25 @@ async function main() {
   const approvedReview = await review(client, state, verdict, sponsor, approvedSubmission.submission, "APPROVED", "approved");
   const bindingReview = await review(client, state, verdict, sponsor, bindingSubmission.submission, "REJECTED", "binding");
   const semanticReview = await review(client, state, verdict, sponsor, semanticSubmission.submission, "REJECTED", "semantic");
+  if (bindingReview.submission.receipt_checks.task_identifier_match !== false ||
+      Object.entries(bindingReview.submission.receipt_checks).some(([key, value]) => !["task_identifier_match", "all_match"].includes(key) && value !== true)) {
+    throw new Error("Binding case must isolate exactly the task identifier mismatch");
+  }
+  if (!semanticReview.submission.receipt_checks.all_match ||
+      semanticReview.submission.obligation_assessments.find((item) => item.obligation_id === "OBL-003")?.verdict !== "VIOLATED") {
+    throw new Error("Semantic case must match every receipt gate and violate the accounting obligation");
+  }
   const duplicateFirstReview = await review(client, state, verdict, sponsor, duplicateFirst.submission, "REJECTED", "duplicateArtifactA");
   const capacityReview = await review(client, state, verdict, sponsor, capacityFirst.submission, "REJECTED", "capacityFirst");
   const claim = await execute(client, state, "claim:approved", "Claim approved reward", { account: approved, address: verdict, functionName: "claim_reward", args: [BigInt(approvedSubmission.submission.submission_id)] });
   const claimed = await read(client, verdict, "get_submission", [BigInt(approvedSubmission.submission.submission_id)]);
   if (claimed.status !== "CLAIMED" || claimed.reservation_status !== "CONSUMED") throw new Error("Approved payout was not consumed and claimed");
+  await finalizeBatch(client);
+  const finalClaimed = await read(client, verdict, "get_submission", [BigInt(approvedSubmission.submission.submission_id)], true);
+  if (finalClaimed.status !== "CLAIMED") throw new Error("Claim not visible in finalized state");
   const expiryReadyAt = Number(expirySubmission.submission.review_deadline);
   if (Math.floor(Date.now() / 1000) <= expiryReadyAt) {
+    writeFileSync(resolve(ROOT, "deploy", "v2.6-progress.json"), JSON.stringify({ generatedAt: new Date().toISOString(), workflowVerified: false, verdict, escrow, approvedReview, bindingReview, semanticReview, claimed, expiryReadyAt }, null, 2));
     console.log(`Expiry checkpoint is ready. Resume after ${new Date((expiryReadyAt + 1) * 1000).toISOString()}; no transaction will be duplicated.`);
     return;
   }
@@ -493,12 +566,20 @@ async function main() {
     if (Number(before.submission_count) !== Number(before.approved_count) + Number(before.rejected_count) + Number(before.expired_count) || BigInt(before.reserved_reward_pool) !== 0n) throw new Error(`${key} cannot close with unresolved accounting`);
     closeRecords[key] = await execute(client, state, `close:${key}`, `Close ${key}`, { account: sponsor, address: verdict, functionName: "close_campaign", args: [BigInt(value.campaign.campaign_id)] });
   }
+  await finalizeBatch(client);
+  const finalCampaigns = {};
+  for (const [key, value] of Object.entries(campaigns)) {
+    const row = await read(client, verdict, "get_campaign", [BigInt(value.campaign.campaign_id)], true);
+    if (row.status !== "CLOSED" || BigInt(row.reward_pool) !== 0n || BigInt(row.reserved_reward_pool) !== 0n) throw new Error(`${key} final close state mismatch`);
+    finalCampaigns[key] = row;
+  }
   const report = {
     generatedAt: new Date().toISOString(), network: "testnet-bradbury", rubricVersion: RUBRIC,
     appUrl: APP_URL, artifactCommit: ARTIFACT_COMMIT, secondaryArtifactCommit: SECONDARY_COMMIT,
     contractAddress: verdict, contractUrl: addressUrl(verdict), evidenceEscrowAddress: escrow, evidenceEscrowUrl: addressUrl(escrow),
-    deployments: { verdictProof: deploymentVerification["contracts/verdict_proof.py"], evidenceEscrow: deploymentVerification["contracts/evidence_escrow.py"] },
+    deployments: deploymentVerification, components: normalized(components),
     roles: { sponsor: sponsor.address, approvedTester: approved.address, rejectedTester: rejected.address },
+    finalCampaigns,
     campaigns: Object.fromEntries(Object.entries(campaigns).map(([key, value]) => [key, value.campaign])),
     expectedFailures: { duplicateTransaction: duplicateTx, duplicateArtifact, capacityExhaustion: capacitySecond },
     reservationRegression: { campaignBeforeReview: normalized(approvalCapacity), approvedDespiteZeroAvailablePool: true },
@@ -517,9 +598,9 @@ async function main() {
     if (value.length >= 12 && serialized.toLowerCase().includes(value)) throw new Error(`Public artifact contains ${name}`);
   }
   writeFileSync(PUBLIC_ARTIFACT, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  console.log(`V2.5 verification complete: ${PUBLIC_ARTIFACT}`);
+  console.log(`V2.6 verification complete: ${PUBLIC_ARTIFACT}`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });
+  main().catch((error) => { console.error(String(error?.details ?? error?.shortMessage ?? error?.message ?? error).split("\n")[0]); process.exitCode = 1; });
 }

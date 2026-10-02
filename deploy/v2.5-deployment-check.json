@@ -1,0 +1,73 @@
+{
+  "generatedAt": "2026-09-28T12:21:49.928Z",
+  "network": "testnet-bradbury",
+  "workflowVerified": false,
+  "deployments": {
+    "contracts/verdict_proof.py": {
+      "contractFile": "contracts/verdict_proof.py",
+      "sourceSha256": "d6c58e8631f4852ef441e132e98aba7b8dc93ee603253894363f927d2bb342d6",
+      "contractAddress": "0x76E7Ae1BE11CB8eb1b12C063532CA3E11CDf03e4",
+      "deploymentTransaction": "0xa36112ff760b6b1aae4e60e27a401bf662622e42c0bff19b5453f992e29ca3a3",
+      "evmTransaction": "0x013181deb893560aa1634f874f5cf761e7a1cbf222a475e8a8e9067ecf2d72bc",
+      "exactSourceMatch": true,
+      "exactSchemaMatch": true,
+      "consensus": {
+        "hash": "0xa36112ff760b6b1aae4e60e27a401bf662622e42c0bff19b5453f992e29ca3a3",
+        "statusName": "FINALIZED",
+        "resultName": "AGREE",
+        "executionResultName": "FINISHED_WITH_RETURN",
+        "validatorsAgreed": 5,
+        "validatorsTotal": 5,
+        "validatorVotes": [
+          "AGREE",
+          "AGREE",
+          "AGREE",
+          "AGREE",
+          "AGREE"
+        ],
+        "rotationsLeft": 3,
+        "recipient": "0x76E7Ae1BE11CB8eb1b12C063532CA3E11CDf03e4",
+        "functionName": "",
+        "args": []
+      }
+    },
+    "contracts/evidence_escrow.py": {
+      "contractFile": "contracts/evidence_escrow.py",
+      "sourceSha256": "7a78e3f5b7dbfde51fe74ac92749ac6e5e3c6669c5926c203980889baf2b4eaa",
+      "contractAddress": "0x465f33065C84A3C598E85801608d45F454D69bdF",
+      "deploymentTransaction": "0x819f7a6adea382bc54b2a7c689860297ae523361e77ef490843447d10e2739c2",
+      "evmTransaction": "0x73b238f3bbf17ded55ca5f37d0116c533cad64bc84a2767abc18875d103d7c82",
+      "exactSourceMatch": true,
+      "exactSchemaMatch": true,
+      "consensus": {
+        "hash": "0x819f7a6adea382bc54b2a7c689860297ae523361e77ef490843447d10e2739c2",
+        "statusName": "FINALIZED",
+        "resultName": "AGREE",
+        "executionResultName": "FINISHED_WITH_RETURN",
+        "validatorsAgreed": 5,
+        "validatorsTotal": 5,
+        "validatorVotes": [
+          "AGREE",
+          "AGREE",
+          "AGREE",
+          "AGREE",
+          "AGREE"
+        ],
+        "rotationsLeft": 3,
+        "recipient": "0x465f33065C84A3C598E85801608d45F454D69bdF",
+        "functionName": "",
+        "args": []
+      }
+    }
+  },
+  "stats": {
+    "campaign_count": 8,
+    "owner": "0x9392f9ed67f8667fe555d2b919c9d84aee8d3259",
+    "rubric_version": "VERDICTPROOF_V2_5_FULL_ASSURANCE",
+    "submission_count": 0,
+    "total_available_reward_pool": "800000000000000000",
+    "total_reserved_reward_pool": "0",
+    "total_reward_pool": "800000000000000000"
+  },
+  "note": "Read-only deployment inspection. This is not submission/review/settlement verification."
+}

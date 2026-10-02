@@ -1,0 +1,4 @@
+# Deployment attestations hash exact UTF-8 bytes, including line endings.
+contracts/*.py text eol=lf
+# This already-finalized escrow was deployed with CRLF; preserve its bytes.
+contracts/evidence_escrow.py text eol=crlf

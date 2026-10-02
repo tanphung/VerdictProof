@@ -83,6 +83,19 @@ describe("genlayer frontend helpers", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    delete window.__VERDICTPROOF_CONFIG__;
+  });
+
+  it("blocks incompatible release reads and writes before calling the SDK", async () => {
+    window.__VERDICTPROOF_CONFIG__ = {
+      contractAddress: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
+      rubricVersion: "VERDICTPROOF_V2_3"
+    };
+    const api = await import("../src/lib/genlayer");
+    await expect(api.readContract("list_campaigns", [0n, 50n])).rejects.toThrow("waiting for its verified V2.6 contract");
+    await expect(api.writeContract(api.readClient(), "create_campaign", [], 1n)).rejects.toThrow("waiting for its verified V2.6 contract");
+    expect(readContractMock).not.toHaveBeenCalled();
+    expect(writeContractMock).not.toHaveBeenCalled();
   });
 
   it("switches an injected wallet to Bradbury when needed", async () => {
@@ -134,7 +147,7 @@ describe("genlayer frontend helpers", () => {
       address: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
       functionName: "list_campaigns",
       args: [0n, 50n],
-      stateStatus: "finalized"
+      transactionHashVariant: "latest-final"
     });
   });
 

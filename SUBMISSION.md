@@ -1,100 +1,28 @@
-# VerdictProof — GenLayer Projects Submission
+# VerdictProof � V2.6 steward resubmission draft
 
-## Short description
+**Not ready to submit:** fresh Bradbury workflow verification and frontend promotion are still in progress. Do not present the historical V2.3 app as the V2.6 release.
 
-VerdictProof is a controlled public pilot for product-testing campaigns. A
-sponsor funds a GEN reward pool, testers stake GEN and submit public usage
-evidence, and an Intelligent Contract asks independent GenLayer validators to
-verify the finalized transaction, wallet identity, task completion, and
-feedback quality before settling a reward or slash verdict.
+## Changes addressing the steward request
 
-## Why GenLayer is central
+1. Every campaign freezes an expected receipt destination contract, method and task identifier, plus deal, beneficiary, amount, kind and released state. Receipt sender must match the submitting tester.
+2. Canonical transaction hashes and immutable `github://repository_id/commit/path` references are consumed globally once at submission acceptance, including across campaigns. SHA-256 and ordered chunk digests establish complete artifact integrity.
+3. Submission acceptance reserves the entire reward atomically. Approval consumes that reservation even with zero available pool. Insufficient capacity rejects before retaining stake or consuming evidence.
+4. Policy becomes immutable after the first accepted submission. Transient review failure keeps the reservation; timeout returns stake and releases capacity; approved claims survive campaign closure.
 
-A deterministic contract can escrow funds, but it cannot decide whether a
-public outcome page actually proves a product task or whether written feedback
-is specific and useful. VerdictProof makes that judgment the on-chain
-settlement boundary:
+## Independent validation
 
-1. Every validator independently reads the finalized Bradbury receipt.
-2. Receipt execution, tester identity, expected recipient, decoded method, and exact task identifier are derived from objective fields.
-3. For valid receipt and identity gates, every validator independently renders
-   the outcome evidence and runs the same versioned semantic rubric.
-4. The contract accepts the leader report only when the validators agree on the
-   evidence gates, verdict, deterministic proof score, and bounded subjective
-   score differences.
-5. Evidence transaction and outcome references are consumed once, and reward capacity is reserved atomically when the submission is accepted.
-6. The consensus-approved result controls stake return, reservation consumption or release,
-   slashing, claiming, and campaign close/refund state.
+Receipt and provenance helpers independently refetch objective evidence for leader/validator comparison. The review helper independently evaluates every agreed artifact chunk and obligation. Receipt facts, obligation decisions and threshold side must agree; subjective scores use bounded tolerances. The UI displays the consensus-committed leader narrative and actual vote metadata.
 
-Removing GenLayer would remove the independent evidence judgment that controls
-settlement, not merely an optional AI summary.
+## Split deployment
 
-## Links
+Bradbury's gas limit prevented the monolithic deployment. The new settlement core uses three fixed, stateless helper contracts. Money, evidence-consumption registries and reservations remain in the core, preserving atomic acceptance and settlement. See `docs/V2_6_ARCHITECTURE.md`.
 
-- Live app: https://verdictproof.vercel.app/
-- Source: https://github.com/tanphung/VerdictProof
-- Bradbury V2.3 contract: https://explorer-bradbury.genlayer.com/address/0xF97993930eCb9e30efd77C0f2AaEE29f4d34aBed
-- Deployment transaction: https://explorer-bradbury.genlayer.com/tx/0x7cb311efeef196d8fcdfae904e43cc21ab1767517453135aa11fc3b3c0a24e6a
-- Public verification artifact: `deploy/latest-bradbury-verification.json`
+## Verified development checks
 
-## What the public pilot proves
+- 126 direct tests: the regression suite against both monolithic reference and split contracts.
+- Real StudioNet split-contract approval with zero available pool, followed by close and claim.
+- 36 frontend tests, 11 verification-runner tests, lint and production build.
 
-The verification artifact is generated only after finalized state confirms the
-complete multi-wallet workflow:
+## Required evidence before sending
 
-- a valid, wallet-owned evidence submission is approved;
-- a receipt-sender identity mismatch is rejected by the hard-gate path;
-- a same-origin but semantically insufficient outcome is rejected by the
-  comparative semantic path;
-- the approved tester claims returned stake plus reward;
-- a campaign owner closes an eligible campaign and receives its unused pool;
-- every published review hash points to this contract and the
-  `evaluate_submission` method with `FINALIZED / AGREE /
-  FINISHED_WITH_RETURN` metadata.
-
-## Steward remediation in V2.4
-
-- Each campaign stores an expected recipient, method, and task identifier.
-- Every validator independently decodes the finalized GenLayer calldata and checks all three exact bindings.
-- Canonical transaction hashes and stable outcome URLs are consumed globally at submission acceptance.
-- `submit_proof` reserves one full reward before accepting tester stake; insufficient capacity reverts before a submission is created.
-- Approval consumes the reservation, rejection releases it and slashes stake, and transient review failures leave it reserved.
-- The Dashboard renders the binding checks, canonical evidence references, reservation status, and settlement explanation directly from finalized contract state.
-
-This is a controlled public pilot with real on-chain workflows. It does not
-claim external users, customers, or adoption that has not been independently
-demonstrated.
-
-## Suggested 90-second demo
-
-1. Open the live Campaigns view and show that campaign data is loaded from the
-   V2.3 Bradbury contract.
-2. Open the sponsor campaign and show the task, proof requirement, reward,
-   stake, threshold, and finalized campaign transaction.
-3. Open the approved submission's full GenLayer consensus report. Explain that
-   validators independently agree on the hard gates, decision, threshold side, and score
-   tolerances, while narrative fields are the consensus-committed leader report. Show all
-   three hard gates, four anchored rubric components, rationales, risk flags, settlement
-   explanation, five validator votes, and the verified explorer link.
-4. Open the identity rejection and point out that receipt execution passed but
-   the sender did not match the tester, so the outcome page was not rendered as
-   task proof.
-5. Open the semantic rejection and point out that receipt and identity passed,
-   but the rendered page did not prove the requested campaign outcome.
-6. Show the claimed approved submission and explain the pull-claim payout.
-7. Show the closed evidence campaign with zero remaining pool and the finalized
-   close/refund transaction.
-8. End on the architecture section in the README: public evidence → independent
-   validator comparison → consensus-approved report → on-chain settlement.
-
-## Reviewer notes
-
-- Candidate rubric version: `VERDICTPROOF_V2_4`; production remains on verified V2.3 until the V2.4 Bradbury workflow and source/schema match are complete.
-- Validation methods: `INDEPENDENT_COMPARATIVE` and
-  `INDEPENDENT_HARD_GATE_FEEDBACK`.
-- The report is the consensus-approved leader narrative; the UI does not invent
-  per-validator transcripts.
-- If an exact review transaction cannot be verified through RPC, the UI says
-  “State committed by GenLayer consensus” and links only to the contract.
-- The repository is MIT licensed and the public artifact contains no private
-  key, mnemonic, password, or keystore data.
+Attach the final V2.6 commit and app URL, core plus all helper deployment/source/schema attestations, finalized approved/rejected reviews, exact replay/capacity rejection reasons, zero-available-pool reservation proof, claim, expiry/refund and campaign-close records. `deploy/v2.6-bradbury-verification.json` must exist and pass release checks. Publish the runtime address, rubric and review mappings together only after this completes.

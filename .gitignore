@@ -18,6 +18,7 @@ npm-debug.log*
 deploy/.bradbury-verification-state.json
 deploy/.bradbury-v25-deployments.json
 deploy/.bradbury-v25-verification-state.json
+deploy/.bradbury-v25-*-verification-state.json
 deploy/.bradbury-v25-preflight-state.json
 
 # Locally rendered demo media (keep the reproducible scripts and narration source)
@@ -27,3 +28,5 @@ deliverables/demo-video/timings.json
 deliverables/demo-video/*.mp4
 deliverables/demo-video/*.png
 deliverables/elevenlabs-*.png
+
+deploy/.bradbury-v26-*.json

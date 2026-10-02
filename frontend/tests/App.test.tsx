@@ -11,7 +11,7 @@ const ensureBradburyNetwork = vi.fn();
 
 vi.mock("../src/lib/genlayer", () => ({
   CONTRACT_ADDRESS: "0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a",
-  RUBRIC_VERSION: "VERDICTPROOF_V2_5_FULL_ASSURANCE",
+  RUBRIC_VERSION: "VERDICTPROOF_V2_6_STEWARD_REMEDIATION",
   REVIEW_TRANSACTIONS: {},
   explorerContract: vi.fn(() => "https://explorer-bradbury.genlayer.com/address/0xfb7632B4BBe41D9fA986aE321e2BCAa1EeA2478a"),
   explorerTx: vi.fn((hash: string) => `https://explorer-bradbury.genlayer.com/tx/${hash}`),
@@ -179,7 +179,7 @@ function campaign(id = 1, title = "Checkout QA Campaign", submissionCount = 0): 
     },
     repository_identity: { repository_id: "12345", repository_node_id: "R_node", owner_id: "6789", owner: "tanphung", repository: "VerdictProof", full_name: "tanphung/VerdictProof" },
     close_settlement: null,
-    rubric_version: "VERDICTPROOF_V2_5_FULL_ASSURANCE"
+    rubric_version: "VERDICTPROOF_V2_6_STEWARD_REMEDIATION"
   };
 }
 
@@ -221,7 +221,7 @@ function reviewedSubmission() {
     evidence_summary: "The receipt, sender, outcome page, and product feedback were checked independently.",
     improvement_recommendation: "Show the resulting campaign ID beside the final transaction.",
     risk_flags: "GOOD_SIGNAL",
-    rubric_version: "VERDICTPROOF_V2_5_FULL_ASSURANCE",
+    rubric_version: "VERDICTPROOF_V2_6_STEWARD_REMEDIATION",
     validation_method: "INDEPENDENT_FULL_ARTIFACT_COMPARATIVE",
     task_analysis: "The transaction method and rendered outcome prove the requested checkout campaign flow.",
     proof_reason: "Strong receipt, ownership, and outcome evidence.",
@@ -315,7 +315,7 @@ describe("VerdictProof app live wallet flow", () => {
   it("labels contract-scoped cache as stale when finalized reads fail", async () => {
     const cached = campaign();
     window.localStorage.setItem(
-      "verdictproof:bradbury:0xfb7632b4bbe41d9fa986ae321e2bcaa1eea2478a:VERDICTPROOF_V2_5_FULL_ASSURANCE:live-state",
+      "verdictproof:bradbury:0xfb7632b4bbe41d9fa986ae321e2bcaa1eea2478a:VERDICTPROOF_V2_6_STEWARD_REMEDIATION:live-state",
       JSON.stringify({
         campaigns: [{
           campaignId: cached.campaign_id,
@@ -631,7 +631,7 @@ describe("VerdictProof app live wallet flow", () => {
 
   it("revalidates a cached local review hash with Bradbury RPC before showing consensus metadata", async () => {
     window.localStorage.setItem(
-      "verdictproof:bradbury:0xfb7632b4bbe41d9fa986ae321e2bcaa1eea2478a:VERDICTPROOF_V2_5_FULL_ASSURANCE:tx-feed",
+      "verdictproof:bradbury:0xfb7632b4bbe41d9fa986ae321e2bcaa1eea2478a:VERDICTPROOF_V2_6_STEWARD_REMEDIATION:tx-feed",
       JSON.stringify([{
         id: txHash,
         hash: txHash,

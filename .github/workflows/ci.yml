@@ -30,6 +30,8 @@ jobs:
     name: Contract lint and direct tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      GENVM_VERSION: v0.3.0-rc7
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -55,10 +57,15 @@ jobs:
               --output "$target"
           fi
           echo "e218a1854214681560351051f76fe2b878545cf3409455ef372d57014a88ca67  $target" | sha256sum --check --strict
+          mkdir -p "$HOME/.cache/genvm-linter"
+          cp "$target" "$HOME/.cache/genvm-linter/genvm-universal-v0.3.0-rc7.tar.xz"
       - name: GenVM lint
         run: |
           genvm-lint check contracts/verdict_proof.py --json
           genvm-lint check contracts/evidence_escrow.py --json
+          genvm-lint check contracts/proof_provenance.py --json
+          genvm-lint check contracts/proof_receipt.py --json
+          genvm-lint check contracts/proof_review.py --json
       - name: Direct contract tests
         # Keep the direct-mode plugin, but do not initialize the network plugin.
         # Direct tests must never require an account private key.
@@ -86,5 +93,7 @@ jobs:
         run: npx tsc --noEmit --noUnusedLocals --noUnusedParameters -p tsconfig.json
       - name: Frontend tests
         run: npm test
+      - name: Verification runner tests
+        run: npm run test:verification
       - name: Production build
         run: npm run build

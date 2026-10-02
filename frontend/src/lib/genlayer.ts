@@ -1,4 +1,5 @@
 import { createClient } from "genlayer-js";
+import { TransactionHashVariant } from "genlayer-js/types";
 import { testnetBradbury } from "genlayer-js/chains";
 import { createPublicClient, http } from "viem";
 
@@ -20,8 +21,14 @@ export const CONTRACT_ADDRESS = runtimeConfig?.contractAddress || import.meta.en
 export const EXPLORER =
   runtimeConfig?.explorer || import.meta.env.VITE_GENLAYER_EXPLORER || "https://explorer-bradbury.genlayer.com";
 export const CHAIN = testnetBradbury;
-export const RUBRIC_VERSION = runtimeConfig?.rubricVersion || "VERDICTPROOF_V2_5_FULL_ASSURANCE";
+export const RUBRIC_VERSION = runtimeConfig?.rubricVersion || "VERDICTPROOF_V2_6_STEWARD_REMEDIATION";
 export const REVIEW_TRANSACTIONS = runtimeConfig?.reviewTransactions ?? {};
+
+function assertSupportedRelease() {
+  if (RUBRIC_VERSION !== "VERDICTPROOF_V2_6_STEWARD_REMEDIATION") {
+    throw new Error("This app is waiting for its verified V2.6 contract. Campaign actions are unavailable on the configured older release.");
+  }
+}
 
 export type Eip1193Provider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -86,15 +93,16 @@ export async function readContract<T>(functionName: string, args: unknown[] = []
   if (!CONTRACT_ADDRESS) {
     throw new Error("Bradbury contract address is not set in frontend/.env.");
   }
+  assertSupportedRelease();
   return enqueueRead(() =>
     withReadRetry(
       () =>
         readClient().readContract({
-          address: CONTRACT_ADDRESS,
+          address: CONTRACT_ADDRESS as `0x${string}`,
           functionName,
           args: args as never,
-          stateStatus: "finalized"
-        } as never) as Promise<T>
+          transactionHashVariant: TransactionHashVariant.LATEST_FINAL
+        }) as Promise<T>
     )
   );
 }
@@ -161,6 +169,7 @@ export async function writeContract(
   args: unknown[] = [],
   value: bigint = 0n
 ) {
+  assertSupportedRelease();
   return client.writeContract({
     address: CONTRACT_ADDRESS,
     functionName,

@@ -18,7 +18,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const RPC_URL = testnetBradbury.rpcUrls.default.http[0];
 const INITIAL_VALIDATORS = 5n;
 const CONTRACT_FILE = String(process.env.VERDICTPROOF_DEPLOY_CONTRACT ?? "contracts/verdict_proof.py").replaceAll("\\", "/");
-const DEPLOYMENT_STATE = resolve(ROOT, "deploy", ".bradbury-v25-deployments.json");
+const DEPLOYMENT_STATE = resolve(ROOT, "deploy", ".bradbury-v26-deployments.json");
 const rpcTransport = () => http(RPC_URL, { retryCount: 0, timeout: 120_000 });
 
 function readEnv(path) {
@@ -145,16 +145,49 @@ async function main() {
   const saved = existsSync(DEPLOYMENT_STATE)
     ? JSON.parse(readFileSync(DEPLOYMENT_STATE, "utf8"))
     : { deployments: {} };
+  const helperFiles = ["proof_provenance", "proof_receipt", "proof_review"];
+  const constructorArgs = CONTRACT_FILE === "contracts/verdict_proof.py" ? helperFiles.map((name) => {
+    const helper = saved.deployments?.[`contracts/${name}.py`];
+    if (!helper?.contractAddress || helper.status !== "FINALIZED") throw new Error(`Finalize ${name} before deploying the core`);
+    const localHash = createHash("sha256").update(readFileSync(resolve(ROOT, helper.contractFile))).digest("hex");
+    if (localHash !== helper.sourceSha256) throw new Error(`${name} source changed since deployment`);
+    return helper.contractAddress;
+  }) : [];
   const prior = saved.deployments?.[CONTRACT_FILE];
-  if (prior?.sourceSha256 === sourceSha256 && /^0x[a-fA-F0-9]{40}$/.test(prior.contractAddress ?? "")) {
-    const deployed = await createClient({ chain: testnetBradbury }).getContractCode(prior.contractAddress);
-    if (deployed === source) {
-      await waitForFinalized(createClient({ chain: testnetBradbury }), account, prior.deploymentTransaction);
-      console.log(`Resuming verified deployment for ${CONTRACT_FILE}.`);
-      console.log(JSON.stringify(prior));
-      return;
+  const persist = (record) => {
+    const latest = existsSync(DEPLOYMENT_STATE) ? JSON.parse(readFileSync(DEPLOYMENT_STATE, "utf8")) : { deployments: {} };
+    latest.deployments[CONTRACT_FILE] = record;
+    writeFileSync(DEPLOYMENT_STATE, `${JSON.stringify(latest, null, 2)}\n`, "utf8");
+  };
+  const complete = async (record) => {
+    const publicClient = createPublicClient({ chain: testnetBradbury, transport: rpcTransport() });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: record.evmTransaction });
+    if (receipt.status !== "success") throw new Error("Deployment EVM transaction reverted; checkpoint retained");
+    record.deploymentTransaction ??= extractGenlayerTxId(receipt.logs, consensusAddress);
+    if (!record.deploymentTransaction) throw new Error("Deployment transaction id missing; checkpoint retained");
+    persist(record);
+    console.log(`Deployment GenLayer transaction: ${record.deploymentTransaction}`);
+    const client = createClient({ chain: testnetBradbury });
+    record.contractAddress = await waitForExecution(client, record.deploymentTransaction);
+    persist(record);
+    console.log(`Contract address (awaiting finality): ${record.contractAddress}`);
+    if (process.env.VERDICTPROOF_DEPLOY_ACCEPT_ONLY === "1" && record.status !== "FINALIZED") {
+      record.status = "ACCEPTED"; persist(record); return;
     }
-    throw new Error(`Saved ${CONTRACT_FILE} deployment does not match local source`);
+    await waitForFinalized(client, account, record.deploymentTransaction);
+    const deployed = await client.getContractCode(record.contractAddress);
+    if (deployed !== source) throw new Error("Deployed source differs from local source");
+    record.status = "FINALIZED";
+    persist(record);
+    console.log(JSON.stringify(record));
+  };
+  if (prior) {
+    if (prior.sourceSha256 !== sourceSha256 || prior.sender !== account.address || JSON.stringify(prior.constructorArgs ?? []) !== JSON.stringify(constructorArgs)) {
+      throw new Error("Release checkpoint source or sender mismatch; refusing to overwrite deployment");
+    }
+    if (!prior.evmTransaction) throw new Error("Incomplete deployment checkpoint requires inspection");
+    await complete(prior);
+    return;
   }
   const controlContract = String(process.env.VERDICTPROOF_DEPLOY_CONTROL_CONTRACT ?? "");
   if (controlContract) {
@@ -165,7 +198,7 @@ async function main() {
     console.log(`Dry-run control uses deployed source from ${controlContract}.`);
   }
   const constructorCalldata = genlayerAbi.calldata.encode(
-    genlayerAbi.calldata.makeCalldataObject(undefined, [], undefined)
+    genlayerAbi.calldata.makeCalldataObject(undefined, constructorArgs, undefined)
   );
   const transactionData = genlayerAbi.transactions.serialize([source, constructorCalldata, false]);
   const baseArgs = [
@@ -189,7 +222,10 @@ async function main() {
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
       const estimated = await publicClient.estimateGas({ account, to: consensusAddress, data });
-      gas = (estimated * 6n) / 5n + 250_000n;
+      const cap = 16_777_216n;
+      if (estimated >= cap) throw new Error(`Estimated gas ${estimated} exceeds Bradbury transaction cap ${cap}`);
+      const padded = (estimated * 6n) / 5n + 250_000n;
+      gas = padded < cap ? padded : cap;
       console.log(`Bradbury gas estimate accepted: ${estimated}`);
       break;
     } catch (error) {
@@ -236,29 +272,12 @@ async function main() {
   }
   if (!evmHash) throw new Error("Bradbury did not accept the deployment transaction");
   console.log(`Deployment EVM transaction: ${evmHash}`);
-  const evmReceipt = await publicClient.waitForTransactionReceipt({ hash: evmHash });
-  if (evmReceipt.status !== "success") throw new Error(`Deployment EVM transaction reverted: ${evmHash}`);
-  const genlayerHash = extractGenlayerTxId(evmReceipt.logs, consensusAddress);
-  if (!genlayerHash) throw new Error("No GenLayer deployment transaction id was emitted");
-  console.log(`Deployment GenLayer transaction: ${genlayerHash}`);
-
-  const client = createClient({ chain: testnetBradbury });
-  const contractAddress = await waitForExecution(client, genlayerHash);
-  await waitForFinalized(client, account, genlayerHash);
-  saved.deployments ??= {};
-  saved.deployments[CONTRACT_FILE] = {
-    contractFile: CONTRACT_FILE,
-    sourceSha256,
-    contractAddress,
-    deploymentTransaction: genlayerHash,
-    evmTransaction: evmHash
-  };
-  writeFileSync(DEPLOYMENT_STATE, `${JSON.stringify(saved, null, 2)}\n`, "utf8");
-  console.log(`Contract address: ${contractAddress}`);
-  console.log(JSON.stringify(saved.deployments[CONTRACT_FILE]));
+  const record = { contractFile: CONTRACT_FILE, sourceSha256, constructorArgs, sender: account.address, evmTransaction: evmHash };
+  persist(record);
+  await complete(record);
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+  console.error(String(error?.details ?? error?.shortMessage ?? error?.message ?? error).split("\n")[0]);
   process.exitCode = 1;
 });
