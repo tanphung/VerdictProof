@@ -395,7 +395,23 @@ async function submit(client, state, verdict, tester, campaign, evidence, file, 
 }
 
 async function review(client, state, verdict, reviewer, submission, expectedStatus, key) {
-  const record = await execute(client, state, `review:${key}`, `Review ${key}`, {
+  state.reviewAttemptIndex ??= {};
+  state.failedReviewAttempts ??= {};
+  let attempt = state.reviewAttemptIndex[key] ?? 0;
+  let checkpointKey = attempt ? `review:${key}:retry:${attempt}` : `review:${key}`;
+  while (state.transactions[checkpointKey]) {
+    const previous = snapshot(await client.getTransaction({ hash: state.transactions[checkpointKey] }), state.transactions[checkpointKey]);
+    if (!["UNDETERMINED", "CANCELED"].includes(previous.statusName) || previous.rotationsLeft !== 0) break;
+    const current = await read(client, verdict, "get_submission", [BigInt(submission.submission_id)]);
+    if (current.status !== "PENDING" || current.reservation_status !== "RESERVED") throw new Error(`${key} failed review unexpectedly changed submission state`);
+    if (attempt >= 2) throw new Error(`${key} exhausted three distinct review attempts without consensus`);
+    state.failedReviewAttempts[checkpointKey] = previous;
+    state.reviewAttemptIndex[key] = ++attempt;
+    checkpointKey = `review:${key}:retry:${attempt}`;
+    saveState(state);
+    console.log(`Review ${key}: prior consensus terminated without settlement; retry ${attempt} preserves the same submission and reservation`);
+  }
+  const record = await execute(client, state, checkpointKey, `Review ${key}`, {
     account: reviewer, address: verdict, functionName: "evaluate_submission", args: [BigInt(submission.submission_id)]
   });
   if (record.functionName !== "evaluate_submission" || record.recipient.toLowerCase() !== verdict.toLowerCase()) throw new Error(`${key} review metadata mismatch`);
@@ -618,6 +634,7 @@ async function main() {
       [`${semanticSubmission.submission.campaign_id}-${semanticSubmission.submission.submission_id}`]: semanticReview.record.hash
     }
   };
+  report.failedReviewAttempts = state.failedReviewAttempts ?? {};
   const serialized = JSON.stringify(report);
   for (const [name, raw] of Object.entries(env)) {
     if (!/private|mnemonic|password|secret/i.test(name)) continue;

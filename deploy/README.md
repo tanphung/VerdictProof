@@ -56,6 +56,13 @@ continuing. Bradbury's GenLayer transaction response omits native value, so a
 resumed payable write authenticates its value from the original EVM transaction,
 successful receipt and matching `CreatedTransaction` identifier.
 
+A timeout while rotating leaders is not a terminal result. Reviews can be retried
+only after the prior transaction is `UNDETERMINED` or `CANCELED` with no rotations
+remaining and the submission is still pending with its reservation intact. The
+runner retains failed hashes, uses separate checkpoint keys and permits at most
+three review transactions per case. It never recreates a submission to retry a
+review.
+
 Cases cover approval with zero available pool, a single task-identifier binding mismatch, a semantic obligation violation, cross-campaign transaction/artifact replay, atomic capacity exhaustion, claim, expiry/refund and close/refund. Expected failures must match their exact contract guard, preserve accounting, and preserve evidence availability.
 
 Expiry requires the real 24-hour contract timeout. Before that deadline, the runner writes `v2.6-progress.json` with `workflowVerified: false` and prints the resume time. Resume with identical commit arguments; do not recreate submissions. The final artifact is `v2.6-bradbury-verification.json`.
