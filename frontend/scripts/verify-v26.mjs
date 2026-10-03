@@ -227,7 +227,7 @@ async function waitResult(client, hash, label, expectError = false) {
   throw new Error(`${label} did not reach its expected result: ${last}`);
 }
 
-async function finalize(client, accountValue, hash, label) {
+export async function finalize(client, accountValue, hash, label) {
   const consensusAddress = testnetBradbury.consensusMainContract?.address;
   const finalizeAbi = (testnetBradbury.consensusMainContract?.abi ?? []).find((entry) => entry.type === "function" && entry.name === "finalizeTransaction");
   if (!consensusAddress || !finalizeAbi) throw new Error("Bradbury finalize ABI unavailable");
