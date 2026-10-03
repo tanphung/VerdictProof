@@ -1,6 +1,6 @@
 # VerdictProof
 
-> V2.6 split-contract candidate: all five deployments are finalized on Bradbury, including the settlement core, three immutable helpers and evidence escrow. Exact source and schema attestations are in `deploy/v2.6-deployment-check.json`. 126 direct parity tests, StudioNet approval integration, 36 frontend tests and build passed. See `deploy/v2.6-release-status.json`. The public runtime remains the historical release until the new workflow is verified.
+> V2.6 revision r2 is being deployed with a recognized runner header and clearer review output requirements. The initial finalized revision is superseded after runner warnings and three unsuccessful approval consensus attempts; its exact source/schema attestations are preserved in `deploy/v2.6-initial-deployment-check.json`. The earlier 126 direct tests, StudioNet integration and frontend checks apply to the initial source. See `docs/V2_6_R2_RELEASE.md` and `deploy/v2.6-release-status.json` for current readiness. The public runtime remains the historical release until the new workflow is verified.
 
 [![CI](https://github.com/tanphung/VerdictProof/actions/workflows/ci.yml/badge.svg)](https://github.com/tanphung/VerdictProof/actions/workflows/ci.yml)
 

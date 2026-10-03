@@ -14,11 +14,14 @@ const ATTO = 10n ** 18n;
 const INITIAL_VALIDATORS = 5n;
 const RUBRIC = "VERDICTPROOF_V2_6_STEWARD_REMEDIATION";
 const ARTIFACT_COMMIT = String(process.argv[2] ?? "").toLowerCase();
+const REVISION = String(process.env.VERDICTPROOF_RELEASE_REVISION ?? "");
+if (REVISION && !/^r[1-9][0-9]*$/.test(REVISION)) throw new Error("Invalid release revision");
+const RELEASE_PREFIX = `.bradbury-v26${REVISION ? `-${REVISION}` : ""}`;
 const LEGACY_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-v26-verification-state.json");
-const STATE_PATH = existsSync(LEGACY_STATE_PATH) && JSON.parse(readFileSync(LEGACY_STATE_PATH, "utf8")).artifactCommit === ARTIFACT_COMMIT
-  ? LEGACY_STATE_PATH : resolve(ROOT, "deploy", `.bradbury-v26-${ARTIFACT_COMMIT}-verification-state.json`);
-const PREFLIGHT_STATE_PATH = resolve(ROOT, "deploy", ".bradbury-v26-preflight-state.json");
-const DEPLOYMENTS_PATH = resolve(ROOT, "deploy", ".bradbury-v26-deployments.json");
+const STATE_PATH = !REVISION && existsSync(LEGACY_STATE_PATH) && JSON.parse(readFileSync(LEGACY_STATE_PATH, "utf8")).artifactCommit === ARTIFACT_COMMIT
+  ? LEGACY_STATE_PATH : resolve(ROOT, "deploy", `${RELEASE_PREFIX}-${ARTIFACT_COMMIT}-verification-state.json`);
+const PREFLIGHT_STATE_PATH = resolve(ROOT, "deploy", `${RELEASE_PREFIX}-preflight-state.json`);
+const DEPLOYMENTS_PATH = resolve(ROOT, "deploy", `${RELEASE_PREFIX}-deployments.json`);
 const PUBLIC_ARTIFACT = resolve(ROOT, "deploy", "v2.6-bradbury-verification.json");
 const MODE = String(process.argv[3] ?? "verify");
 const pendingWrites = [];

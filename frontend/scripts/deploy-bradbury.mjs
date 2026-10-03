@@ -18,7 +18,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const RPC_URL = testnetBradbury.rpcUrls.default.http[0];
 const INITIAL_VALIDATORS = 5n;
 const CONTRACT_FILE = String(process.env.VERDICTPROOF_DEPLOY_CONTRACT ?? "contracts/verdict_proof.py").replaceAll("\\", "/");
-const DEPLOYMENT_STATE = resolve(ROOT, "deploy", ".bradbury-v26-deployments.json");
+const REVISION = String(process.env.VERDICTPROOF_RELEASE_REVISION ?? "");
+if (REVISION && !/^r[1-9][0-9]*$/.test(REVISION)) throw new Error("Invalid release revision");
+const DEPLOYMENT_STATE = resolve(ROOT, "deploy", `.bradbury-v26${REVISION ? `-${REVISION}` : ""}-deployments.json`);
 const rpcTransport = () => http(RPC_URL, { retryCount: 0, timeout: 120_000 });
 
 function readEnv(path) {
@@ -141,6 +143,9 @@ async function main() {
 
   const sourcePath = resolve(ROOT, CONTRACT_FILE);
   let source = readFileSync(sourcePath, "utf8");
+  if (!/^# v0\.1\.0\r?\n# \{ "Depends": "py-genlayer:[a-z0-9]+" \}/.test(source)) {
+    throw new Error("Contract must declare its runner version before a concrete dependency pin");
+  }
   const sourceSha256 = createHash("sha256").update(source).digest("hex");
   const saved = existsSync(DEPLOYMENT_STATE)
     ? JSON.parse(readFileSync(DEPLOYMENT_STATE, "utf8"))

@@ -2,6 +2,11 @@
 
 Production currently uses the historical V2.3 runtime configuration and `latest-bradbury-verification.json`. V2.6 source is a split-contract candidate. A deployed address does not prove the complete workflow.
 
+The current candidate is revision r2. Set
+`$env:VERDICTPROOF_RELEASE_REVISION='r2'` for every deployment and verification
+command below. The initial revision is superseded; its deployed source and
+attestations are preserved separately. See `docs/V2_6_R2_RELEASE.md`.
+
 ## Checks before deployment
 
 Use the pinned GenVM runner, lint all five contract files, run direct regressions and StudioNet integration, then frontend tests/build. On Windows:

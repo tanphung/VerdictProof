@@ -1,6 +1,12 @@
-# VerdictProof — V2.6 steward resubmission draft
+# VerdictProof â€” V2.6 steward resubmission draft
 
 **Not ready to submit:** fresh Bradbury workflow verification and frontend promotion are still in progress. Do not present the historical V2.3 app as the V2.6 release.
+
+The initial split deployment is superseded: its runner header was ignored and
+three approval review attempts failed consensus without settlement. Revision r2
+corrects the header and makes output structure and obligation scope explicit.
+Use only r2's completed workflow as resubmission evidence; see
+`docs/V2_6_R2_RELEASE.md`.
 
 ## Changes addressing the steward request
 
@@ -18,6 +24,10 @@ Receipt and provenance helpers independently refetch objective evidence for lead
 Bradbury's gas limit prevented the monolithic deployment. The new settlement core uses three fixed, stateless helper contracts. Money, evidence-consumption registries and reservations remain in the core, preserving atomic acceptance and settlement. See `docs/V2_6_ARCHITECTURE.md`.
 
 ## Verified development checks
+
+These counts describe the initial split source. Do not claim they have been
+rerun against r2 until that verification is recorded. All five r2 contracts have
+passed GenVM lint; fresh Bradbury verification is in progress.
 
 - 126 direct tests: the regression suite against both monolithic reference and split contracts.
 - Real StudioNet split-contract approval with zero available pool, followed by close and claim.

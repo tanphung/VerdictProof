@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T06:04:47.9351755Z",
+  "generatedAt": "2026-10-03T06:28:34.6907195Z",
   "release": "VERDICTPROOF_V2_6_STEWARD_REMEDIATION",
   "readyForResubmission": false,
   "contractSourceSha256": "5588edb2e2959589a46c732c5fa75435aaa28759252f6dc63ad0d55480b9c0dc",
@@ -14,9 +14,10 @@
     "productionAudit": "0 vulnerabilities"
   },
   "remaining": [
-    "Complete fresh binding/replay/capacity/approval/claim verification.",
-    "Wait for the real 24-hour review deadline, then verify expiry/refund and campaign closure.",
-    "Validate release artifact, promote runtime config and publish frontend."
+    "Finalize five revision r2 deployments with recognized runner header.",
+    "Prepare and commit fresh r2 fixtures; complete all workflow cases.",
+    "Expire/refund and close the initial revision campaigns after actual deadlines.",
+    "Validate final artifact and publish the new runtime."
   ],
   "reference": "https://github.com/genlayerlabs/genlayer-cli/issues/419",
   "architecture": "settlement core plus three immutable stateless helpers",
@@ -39,167 +40,10 @@
       "contractAddress": "0x9Fa296927b2E3922cEEe24aa05f63459046E0E1B"
     }
   },
-  "deployments": {
-    "contracts/verdict_proof.py": {
-      "contractFile": "contracts/verdict_proof.py",
-      "sourceSha256": "5588edb2e2959589a46c732c5fa75435aaa28759252f6dc63ad0d55480b9c0dc",
-      "constructorArgs": [
-        "0x2a563168dD958823603288059d28A681198aC97F",
-        "0x3aC758f93C9c2bAcc2AF2842a044Fa0aec8fA95d",
-        "0x2230c3537BC8E0D279F10bB30196d74F32617c85"
-      ],
-      "sender": "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259",
-      "evmTransaction": "0xebeb61d809272a02cfa01fb8d0a72b3a699c23700c64685f2570ae9529818348",
-      "deploymentTransaction": "0x0420f8f2cce35626961d1eabdde26e325b8332c03d54f763903142efe1d89bbe",
-      "contractAddress": "0x397743cd5A69d1895044a569249EAB21CAF6F466",
-      "status": "FINALIZED",
-      "exactSourceMatch": true,
-      "exactSchemaMatch": true,
-      "consensus": {
-        "hash": "0x0420f8f2cce35626961d1eabdde26e325b8332c03d54f763903142efe1d89bbe",
-        "statusName": "FINALIZED",
-        "resultName": "AGREE",
-        "executionResultName": "FINISHED_WITH_RETURN",
-        "validatorsAgreed": 5,
-        "validatorsTotal": 5,
-        "validatorVotes": [
-          "AGREE",
-          "AGREE",
-          "AGREE",
-          "AGREE",
-          "AGREE"
-        ],
-        "rotationsLeft": 3,
-        "recipient": "0x397743cd5A69d1895044a569249EAB21CAF6F466",
-        "functionName": "",
-        "args": []
-      }
-    },
-    "contracts/evidence_escrow.py": {
-      "contractFile": "contracts/evidence_escrow.py",
-      "sourceSha256": "7a78e3f5b7dbfde51fe74ac92749ac6e5e3c6669c5926c203980889baf2b4eaa",
-      "sender": "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259",
-      "evmTransaction": "0xb38d10c5ee9b3f41fa06c74121dfe9b25dc8ddc7ddc0afb78e740d744a6d83ec",
-      "deploymentTransaction": "0x539f35e776a16bf0364b2f0888c3729a110daa7bec76d65dac483728137cd99a",
-      "contractAddress": "0x9Fa296927b2E3922cEEe24aa05f63459046E0E1B",
-      "status": "FINALIZED",
-      "exactSourceMatch": true,
-      "exactSchemaMatch": true,
-      "consensus": {
-        "hash": "0x539f35e776a16bf0364b2f0888c3729a110daa7bec76d65dac483728137cd99a",
-        "statusName": "FINALIZED",
-        "resultName": "AGREE",
-        "executionResultName": "FINISHED_WITH_RETURN",
-        "validatorsAgreed": 5,
-        "validatorsTotal": 5,
-        "validatorVotes": [
-          "AGREE",
-          "AGREE",
-          "AGREE",
-          "AGREE",
-          "AGREE"
-        ],
-        "rotationsLeft": 3,
-        "recipient": "0x9Fa296927b2E3922cEEe24aa05f63459046E0E1B",
-        "functionName": "",
-        "args": []
-      }
-    },
-    "contracts/proof_provenance.py": {
-      "contractFile": "contracts/proof_provenance.py",
-      "sourceSha256": "58f3d51dde2c5ad5eb68689f7e55d567f3b8e8e310428c09add30fc8ae8c9f0d",
-      "constructorArgs": [],
-      "sender": "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259",
-      "evmTransaction": "0x57828d295ade9b94a467204a2e2fcc4a898d94556b0f0543d2f6e807d710de83",
-      "deploymentTransaction": "0x1e8abd5bb0d661b4077f4ef35aafff6ac94b8cd733627c764e9ccf47717fdf10",
-      "contractAddress": "0x2a563168dD958823603288059d28A681198aC97F",
-      "status": "FINALIZED",
-      "exactSourceMatch": true,
-      "exactSchemaMatch": true,
-      "consensus": {
-        "hash": "0x1e8abd5bb0d661b4077f4ef35aafff6ac94b8cd733627c764e9ccf47717fdf10",
-        "statusName": "FINALIZED",
-        "resultName": "AGREE",
-        "executionResultName": "FINISHED_WITH_RETURN",
-        "validatorsAgreed": 5,
-        "validatorsTotal": 5,
-        "validatorVotes": [
-          "AGREE",
-          "AGREE",
-          "AGREE",
-          "AGREE",
-          "AGREE"
-        ],
-        "rotationsLeft": 3,
-        "recipient": "0x2a563168dD958823603288059d28A681198aC97F",
-        "functionName": "",
-        "args": []
-      }
-    },
-    "contracts/proof_receipt.py": {
-      "contractFile": "contracts/proof_receipt.py",
-      "sourceSha256": "45d70e7faed5f23e552c8a722f2494b15fe94bbaccfb31ca058929370b7143b9",
-      "constructorArgs": [],
-      "sender": "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259",
-      "evmTransaction": "0x36ff1c826133cce249a408ba05b03996e8445ae310e28ab94e438d9c1ade619e",
-      "deploymentTransaction": "0x29bcd94d1ac5de0548d3318c9a938eabf921bbed1757a7a933022e10e79ea470",
-      "contractAddress": "0x3aC758f93C9c2bAcc2AF2842a044Fa0aec8fA95d",
-      "status": "FINALIZED",
-      "exactSourceMatch": true,
-      "exactSchemaMatch": true,
-      "consensus": {
-        "hash": "0x29bcd94d1ac5de0548d3318c9a938eabf921bbed1757a7a933022e10e79ea470",
-        "statusName": "FINALIZED",
-        "resultName": "AGREE",
-        "executionResultName": "FINISHED_WITH_RETURN",
-        "validatorsAgreed": 5,
-        "validatorsTotal": 5,
-        "validatorVotes": [
-          "AGREE",
-          "AGREE",
-          "AGREE",
-          "AGREE",
-          "AGREE"
-        ],
-        "rotationsLeft": 3,
-        "recipient": "0x3aC758f93C9c2bAcc2AF2842a044Fa0aec8fA95d",
-        "functionName": "",
-        "args": []
-      }
-    },
-    "contracts/proof_review.py": {
-      "contractFile": "contracts/proof_review.py",
-      "sourceSha256": "6abe5ef5dfa510cea0171c4dc2f7f04d5a42751d67bbdbc55f499b75f2ca86ca",
-      "constructorArgs": [],
-      "sender": "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259",
-      "evmTransaction": "0x7dab2ce6979c70d16e123c9f51ed7138cd780c2bc302734f028876b66acaa965",
-      "deploymentTransaction": "0x28943ad1e68f23ec7fe822cfafbda07e9a80f5e686677c17ecaa0acfbe3dd1d7",
-      "contractAddress": "0x2230c3537BC8E0D279F10bB30196d74F32617c85",
-      "status": "FINALIZED",
-      "exactSourceMatch": true,
-      "exactSchemaMatch": true,
-      "consensus": {
-        "hash": "0x28943ad1e68f23ec7fe822cfafbda07e9a80f5e686677c17ecaa0acfbe3dd1d7",
-        "statusName": "FINALIZED",
-        "resultName": "AGREE",
-        "executionResultName": "FINISHED_WITH_RETURN",
-        "validatorsAgreed": 5,
-        "validatorsTotal": 5,
-        "validatorVotes": [
-          "AGREE",
-          "AGREE",
-          "AGREE",
-          "AGREE",
-          "AGREE"
-        ],
-        "rotationsLeft": 3,
-        "recipient": "0x2230c3537BC8E0D279F10bB30196d74F32617c85",
-        "functionName": "",
-        "args": []
-      }
-    }
-  },
   "artifactCommit": "d4bc93899cd3cb19192f518d56d76e509ae6583c",
   "secondaryArtifactCommit": "538775e5b053ac4263bdb581ee2912e91e9ff3d3",
-  "ci": "https://github.com/tanphung/VerdictProof/actions/runs/37009573685"
+  "ci": "https://github.com/tanphung/VerdictProof/actions/runs/37009573685",
+  "revision": "r2",
+  "initialRevisionStatus": "SUPERSEDED: runner header ignored; three approval review attempts ended UNDETERMINED/DISAGREE",
+  "initialDeploymentAttestation": "deploy/v2.6-initial-deployment-check.json"
 }
