@@ -177,7 +177,7 @@ export async function checkpointWrite(client, state, key, label, request, broadc
 export function expectedExecution(record, expectError = false) {
   const terminal = ["ACCEPTED", "READY_TO_FINALIZE", "FINALIZED"].includes(record.statusName);
   if (!terminal) {
-    if (/DISAGREE|UNDETERMINED|CANCELED|TIMEOUT/.test(`${record.resultName}/${record.statusName}`) && Number(record.rotationsLeft ?? 0) === 0) {
+    if (["UNDETERMINED", "CANCELED"].includes(record.statusName) && Number(record.rotationsLeft ?? 0) === 0) {
       throw new Error(`failed consensus: ${record.statusName}/${record.resultName}`);
     }
     return false;

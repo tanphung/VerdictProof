@@ -21,10 +21,11 @@ test("expected reverts cannot be satisfied by a successful or consensus-failed t
   assert.throws(() => expectedExecution({ ...success, resultName: "DISAGREE", executionResultName: "FINISHED_WITH_ERROR" }, true), /failed consensus/);
 });
 
-test("active rotations remain pending, exhausted rotations fail promptly", () => {
+test("timeout stages remain pending until consensus reaches a terminal state", () => {
   const timeout = { statusName: "VALIDATORS_TIMEOUT", resultName: "TIMEOUT", executionResultName: "", rotationsLeft: 1 };
   assert.equal(expectedExecution(timeout), false);
-  assert.throws(() => expectedExecution({ ...timeout, rotationsLeft: 0 }), /failed consensus/);
+  assert.equal(expectedExecution({ ...timeout, rotationsLeft: 0 }), false);
+  assert.throws(() => expectedExecution({ ...timeout, statusName: "UNDETERMINED", rotationsLeft: 0 }), /failed consensus/);
 });
 
 test("a receipt timeout preserves the broadcast and resumes without sending again", async () => {

@@ -29,6 +29,7 @@ def transaction(row, method, address, error=False):
 def verify(report):
     require(report["network"] == "testnet-bradbury" and report["rubricVersion"] == RUBRIC, "Wrong release")
     require(re.fullmatch(r"[0-9a-f]{40}", report["artifactCommit"]), "Missing immutable artifact commit")
+    require(re.fullmatch(r"[0-9a-f]{40}", report["secondaryArtifactCommit"]), "Missing secondary immutable artifact commit")
     require(report["artifactCommit"] != report["secondaryArtifactCommit"], "Capacity reference must be distinct")
     for file in ("verdict_proof", "proof_provenance", "proof_receipt", "proof_review", "evidence_escrow"):
         path = f"contracts/{file}.py"
@@ -47,9 +48,19 @@ def verify(report):
         require(submission["rubric_version"] == RUBRIC, "Wrong review rubric")
         require(submission["reviewed_chunks"] == list(range(int(submission["total_chunks"]))), "Incomplete chunk review")
         require(submission["approved"] is (key == "approved"), "Unexpected verdict")
+        require(submission["commit_sha"] == report["artifactCommit"], "Review uses a different artifact commit")
+        manifest = submission["provenance_manifest"]
+        require(manifest["sha256"] == submission["artifact_sha256"] and manifest["byte_length"] == submission["artifact_byte_length"], "Artifact manifest mismatch")
+        require(manifest["chunk_digests"] == submission["chunk_digests"] and len(submission["chunk_digests"]) == int(submission["total_chunks"]), "Chunk manifest mismatch")
     approved = report["reviews"]["approved"]["submission"]
     require(approved["receipt_checks"]["all_match"], "Approval has a failed receipt gate")
     require(all(item["verdict"] == "SATISFIED" for item in approved["obligation_assessments"]), "Approval has a violated obligation")
+    binding = report["reviews"]["bindingRejected"]["submission"]["receipt_checks"]
+    require(binding["task_identifier_match"] is False and binding["all_match"] is False, "Binding case does not fail task attribution")
+    require(all(value is True for key, value in binding.items() if key not in ("task_identifier_match", "all_match")), "Binding case has unrelated failed gates")
+    semantic = report["reviews"]["semanticRejected"]["submission"]
+    require(semantic["receipt_checks"]["all_match"] is True, "Semantic case has an unrelated receipt failure")
+    require(any(item["obligation_id"] == "OBL-003" and item["verdict"] == "VIOLATED" for item in semantic["obligation_assessments"]), "Semantic case does not violate the required accounting obligation")
     before = report["reservationRegression"]["campaignBeforeReview"]
     require(int(before["reward_pool"]) == 0 and int(before["reserved_reward_pool"]) == int(approved["reserved_reward_amount"]), "Missing zero-capacity reservation proof")
     for key, row in report["expectedFailures"].items():
