@@ -2,3 +2,4 @@
 contracts/*.py text eol=lf
 # This already-finalized escrow was deployed with CRLF; preserve its bytes.
 contracts/evidence_escrow.py text eol=crlf
+evidence/v2.6/*.md text eol=lf
