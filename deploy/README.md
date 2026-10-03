@@ -50,6 +50,12 @@ node scripts/verify-v26.mjs <primary-fixture-commit-sha> verify
 
 Inspection verifies all five source/schema attestations, deployment finality, and exact helper bindings. Verification checkpoints each request and broadcast. Dependent steps may use explicit `latest-nonfinal` reads after acceptance; all transactions are finalized before writing a public progress/release report. The app uses `latest-final`.
 
+Accepted transaction status can become visible before its state reaches the read
+RPC. The runner waits for consumed references and settlement states before
+continuing. Bradbury's GenLayer transaction response omits native value, so a
+resumed payable write authenticates its value from the original EVM transaction,
+successful receipt and matching `CreatedTransaction` identifier.
+
 Cases cover approval with zero available pool, a single task-identifier binding mismatch, a semantic obligation violation, cross-campaign transaction/artifact replay, atomic capacity exhaustion, claim, expiry/refund and close/refund. Expected failures must match their exact contract guard, preserve accounting, and preserve evidence availability.
 
 Expiry requires the real 24-hour contract timeout. Before that deadline, the runner writes `v2.6-progress.json` with `workflowVerified: false` and prints the resume time. Resume with identical commit arguments; do not recreate submissions. The final artifact is `v2.6-bradbury-verification.json`.

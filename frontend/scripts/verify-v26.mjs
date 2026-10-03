@@ -138,9 +138,23 @@ export async function checkpointWrite(client, state, key, label, request, broadc
   if (existing) {
     const tx = await client.getTransaction({ hash: existing });
     const call = callDetails(tx);
+    let transferredValue = tx.value;
+    if (transferredValue === undefined || transferredValue === null) {
+      const evmHash = state.evmTransactions[key];
+      if (!evmHash) throw new Error(`${label} lacks an EVM checkpoint for native value verification`);
+      const [evmTx, evmReceipt] = await Promise.all([
+        publicClient.getTransaction({ hash: evmHash }), publicClient.getTransactionReceipt({ hash: evmHash })
+      ]);
+      if (evmReceipt.status !== "success" || evmTx.from.toLowerCase() !== request.account.address.toLowerCase() ||
+          String(evmTx.to).toLowerCase() !== testnetBradbury.consensusMainContract.address.toLowerCase() ||
+          extractGenlayerTxId(evmReceipt.logs, testnetBradbury.consensusMainContract.address).toLowerCase() !== existing.toLowerCase()) {
+        throw new Error(`${label} EVM checkpoint does not authenticate this GenLayer transaction`);
+      }
+      transferredValue = evmTx.value;
+    }
     if (String(tx.recipient).toLowerCase() !== request.address.toLowerCase() ||
         String(tx.sender ?? tx.from_address ?? "").toLowerCase() !== request.account.address.toLowerCase() ||
-        BigInt(tx.value ?? 0) !== BigInt(request.value ?? 0) ||
+        BigInt(transferredValue) !== BigInt(request.value ?? 0) ||
         call.method !== request.functionName || compact(call.args) !== compact(normalized(request.args ?? []))) {
       throw new Error(`${label} checkpoint does not match exact sender, value, recipient, method, and calldata`);
     }
@@ -271,6 +285,15 @@ export async function read(client, address, functionName, args = [], finalized =
     transactionHashVariant: finalized ? "latest-final" : "latest-nonfinal" });
 }
 
+async function readUntil(client, address, functionName, args, ready, label) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const value = await read(client, address, functionName, args);
+    if (ready(value)) return value;
+    await sleep(2000);
+  }
+  throw new Error(`${label} state did not become visible after accepted execution`);
+}
+
 async function findCampaign(client, verdict, title) {
   const result = await read(client, verdict, "list_campaigns", [0n, 100n]);
   return (result.campaigns ?? []).find((item) => item.title === title);
@@ -341,7 +364,10 @@ async function submit(client, state, verdict, tester, campaign, evidence, file, 
     args: [BigInt(campaign.campaign_id), BigInt(campaign.stake_required), txUrl(evidence.hash), commit, file.sha256, BigInt(file.byteLength), feedback],
     value: BigInt(campaign.stake_required)
   }, expectError);
-  const after = await read(client, verdict, "get_evidence_usage", [BigInt(campaign.campaign_id), txUrl(evidence.hash), commit]);
+  const usageArgs = [BigInt(campaign.campaign_id), txUrl(evidence.hash), commit];
+  const after = expectError
+    ? await read(client, verdict, "get_evidence_usage", usageArgs)
+    : await readUntil(client, verdict, "get_evidence_usage", usageArgs, (value) => !value.available, key);
   if (expectError) {
     if (compact(canonical(normalized(before))) !== compact(canonical(normalized(after)))) throw new Error(`${key} expected rejection changed evidence usage`);
     const campaignAfter = await read(client, verdict, "get_campaign", [BigInt(campaign.campaign_id)]);
@@ -373,7 +399,8 @@ async function review(client, state, verdict, reviewer, submission, expectedStat
     account: reviewer, address: verdict, functionName: "evaluate_submission", args: [BigInt(submission.submission_id)]
   });
   if (record.functionName !== "evaluate_submission" || record.recipient.toLowerCase() !== verdict.toLowerCase()) throw new Error(`${key} review metadata mismatch`);
-  const result = await read(client, verdict, "get_submission", [BigInt(submission.submission_id)]);
+  const result = await readUntil(client, verdict, "get_submission", [BigInt(submission.submission_id)],
+    (value) => value.status === expectedStatus || (expectedStatus === "APPROVED" && value.status === "CLAIMED" && value.approved), key);
   const matchesStatus = result.status === expectedStatus || (expectedStatus === "APPROVED" && result.status === "CLAIMED" && result.approved);
   if (!matchesStatus || result.rubric_version !== RUBRIC) throw new Error(`${key} expected ${expectedStatus}, received ${result.status}`);
   if (result.reviewed_chunks.length !== Number(result.total_chunks) || result.obligation_assessments.length === 0) throw new Error(`${key} report does not prove complete review`);
@@ -546,7 +573,7 @@ async function main() {
   const duplicateFirstReview = await review(client, state, verdict, sponsor, duplicateFirst.submission, "REJECTED", "duplicateArtifactA");
   const capacityReview = await review(client, state, verdict, sponsor, capacityFirst.submission, "REJECTED", "capacityFirst");
   const claim = await execute(client, state, "claim:approved", "Claim approved reward", { account: approved, address: verdict, functionName: "claim_reward", args: [BigInt(approvedSubmission.submission.submission_id)] });
-  const claimed = await read(client, verdict, "get_submission", [BigInt(approvedSubmission.submission.submission_id)]);
+  const claimed = await readUntil(client, verdict, "get_submission", [BigInt(approvedSubmission.submission.submission_id)], (value) => value.status === "CLAIMED", "Claim");
   if (claimed.status !== "CLAIMED" || claimed.reservation_status !== "CONSUMED") throw new Error("Approved payout was not consumed and claimed");
   await finalizeBatch(client);
   const finalClaimed = await read(client, verdict, "get_submission", [BigInt(approvedSubmission.submission.submission_id)], true);
@@ -558,7 +585,7 @@ async function main() {
     return;
   }
   const expiry = await execute(client, state, "expire:pending", "Expire pending submission", { account: rejected, address: verdict, functionName: "expire_submission", args: [BigInt(expirySubmission.submission.submission_id)] });
-  const expired = await read(client, verdict, "get_submission", [BigInt(expirySubmission.submission.submission_id)]);
+  const expired = await readUntil(client, verdict, "get_submission", [BigInt(expirySubmission.submission.submission_id)], (value) => value.status === "EXPIRED", "Expiry");
   if (expired.status !== "EXPIRED" || expired.reservation_status !== "RELEASED" || expired.settlement_record.kind !== "EXPIRY_REFUND") throw new Error("Expiry did not refund stake and release reservation");
   const closeRecords = {};
   for (const [key, value] of Object.entries(campaigns)) {
