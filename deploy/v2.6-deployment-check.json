@@ -1,44 +1,7 @@
 {
-  "generatedAt": "2026-10-03T06:04:47.9351755Z",
-  "release": "VERDICTPROOF_V2_6_STEWARD_REMEDIATION",
-  "readyForResubmission": false,
-  "contractSourceSha256": "5588edb2e2959589a46c732c5fa75435aaa28759252f6dc63ad0d55480b9c0dc",
-  "checks": {
-    "genvmLint": "passed",
-    "directTests": 126,
-    "studioNetIntegration": 1,
-    "frontendTests": 36,
-    "verificationRunnerTests": 11,
-    "frontendBuild": "passed",
-    "studioNetZeroCapacityCloseThenClaim": "passed",
-    "productionAudit": "0 vulnerabilities"
-  },
-  "remaining": [
-    "Complete fresh binding/replay/capacity/approval/claim verification.",
-    "Wait for the real 24-hour review deadline, then verify expiry/refund and campaign closure.",
-    "Validate release artifact, promote runtime config and publish frontend."
-  ],
-  "reference": "https://github.com/genlayerlabs/genlayer-cli/issues/419",
-  "architecture": "settlement core plus three immutable stateless helpers",
-  "previousMonolithAttempt": {
-    "verdictProof": {
-      "status": "RPC_REJECTED",
-      "error": "gas limit too high",
-      "estimatedGas": "43141127",
-      "requestedGas": "52019352",
-      "rpcReturnedIdentifier": "0x90e510f83e920cfc7c0a56d48cff46767898353105288d6cd813ffecafbffa40",
-      "transactionFound": false,
-      "receiptFound": false
-    },
-    "escrow": {
-      "contractFile": "contracts/evidence_escrow.py",
-      "sourceSha256": "7a78e3f5b7dbfde51fe74ac92749ac6e5e3c6669c5926c203980889baf2b4eaa",
-      "sender": "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259",
-      "evmTransaction": "0xb38d10c5ee9b3f41fa06c74121dfe9b25dc8ddc7ddc0afb78e740d744a6d83ec",
-      "deploymentTransaction": "0x539f35e776a16bf0364b2f0888c3729a110daa7bec76d65dac483728137cd99a",
-      "contractAddress": "0x9Fa296927b2E3922cEEe24aa05f63459046E0E1B"
-    }
-  },
+  "generatedAt": "2026-10-03T06:04:07.003Z",
+  "network": "testnet-bradbury",
+  "workflowVerified": false,
   "deployments": {
     "contracts/verdict_proof.py": {
       "contractFile": "contracts/verdict_proof.py",
@@ -199,7 +162,14 @@
       }
     }
   },
-  "artifactCommit": "d4bc93899cd3cb19192f518d56d76e509ae6583c",
-  "secondaryArtifactCommit": "538775e5b053ac4263bdb581ee2912e91e9ff3d3",
-  "ci": "https://github.com/tanphung/VerdictProof/actions/runs/37009573685"
+  "stats": {
+    "campaign_count": 2,
+    "owner": "0x9392f9ed67f8667fe555d2b919c9d84aee8d3259",
+    "rubric_version": "VERDICTPROOF_V2_6_STEWARD_REMEDIATION",
+    "submission_count": 0,
+    "total_available_reward_pool": "200000000000000000",
+    "total_reserved_reward_pool": "0",
+    "total_reward_pool": "200000000000000000"
+  },
+  "note": "Read-only deployment inspection. This is not submission/review/settlement verification."
 }

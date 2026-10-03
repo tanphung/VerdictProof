@@ -1,6 +1,6 @@
 # VerdictProof
 
-> V2.6 split-contract candidate: three immutable helper contracts and a settlement core. The helpers are finalized on Bradbury; the new core deployment is accepted and awaiting finality. 126 direct parity tests, StudioNet approval integration, 36 frontend tests and build passed. See `deploy/v2.6-release-status.json`. The public runtime remains the historical release until the new workflow is verified.
+> V2.6 split-contract candidate: all five deployments are finalized on Bradbury, including the settlement core, three immutable helpers and evidence escrow. Exact source and schema attestations are in `deploy/v2.6-deployment-check.json`. 126 direct parity tests, StudioNet approval integration, 36 frontend tests and build passed. See `deploy/v2.6-release-status.json`. The public runtime remains the historical release until the new workflow is verified.
 
 [![CI](https://github.com/tanphung/VerdictProof/actions/workflows/ci.yml/badge.svg)](https://github.com/tanphung/VerdictProof/actions/workflows/ci.yml)
 
