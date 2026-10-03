@@ -1,17 +1,13 @@
 {
-  "generatedAt": "2026-10-03T06:28:34.6907195Z",
+  "generatedAt": "2026-10-03T06:36:20.6215767Z",
   "release": "VERDICTPROOF_V2_6_STEWARD_REMEDIATION",
   "readyForResubmission": false,
-  "contractSourceSha256": "5588edb2e2959589a46c732c5fa75435aaa28759252f6dc63ad0d55480b9c0dc",
+  "contractSourceSha256": "14eeaa40a3761e72c97c6c14a48070638fa82bbb22610b9039ec1720a5f6294c",
   "checks": {
-    "genvmLint": "passed",
-    "directTests": 126,
-    "studioNetIntegration": 1,
-    "frontendTests": 36,
-    "verificationRunnerTests": 11,
-    "frontendBuild": "passed",
-    "studioNetZeroCapacityCloseThenClaim": "passed",
-    "productionAudit": "0 vulnerabilities"
+    "genvmLint": "all five r2 contracts passed",
+    "runnerScriptSyntax": "passed",
+    "recognizedRunnerHeader": "r2 escrow deployment trace has no ignored-header warning",
+    "freshBradburyWorkflow": "in progress"
   },
   "remaining": [
     "Finalize five revision r2 deployments with recognized runner header.",
@@ -45,5 +41,59 @@
   "ci": "https://github.com/tanphung/VerdictProof/actions/runs/37009573685",
   "revision": "r2",
   "initialRevisionStatus": "SUPERSEDED: runner header ignored; three approval review attempts ended UNDETERMINED/DISAGREE",
-  "initialDeploymentAttestation": "deploy/v2.6-initial-deployment-check.json"
+  "initialDeploymentAttestation": "deploy/v2.6-initial-deployment-check.json",
+  "initialChecks": {
+    "genvmLint": "passed",
+    "directTests": 126,
+    "studioNetIntegration": 1,
+    "frontendTests": 36,
+    "verificationRunnerTests": 11,
+    "frontendBuild": "passed",
+    "studioNetZeroCapacityCloseThenClaim": "passed",
+    "productionAudit": "0 vulnerabilities"
+  },
+  "deployments": {
+    "contracts/evidence_escrow.py": {
+      "contractFile": "contracts/evidence_escrow.py",
+      "sourceSha256": "549fb370120ac8102157e6b69694f4948e6d47b4869fc25dca4ce2ce8653d4fd",
+      "constructorArgs": [],
+      "sender": "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259",
+      "evmTransaction": "0x222f5ee9a6b51819286f2cea079b43e70cf1771f2e8239486c7bfa40b501b565",
+      "deploymentTransaction": "0x426cac4b49fb5fe83cd7d2cee234b2e2574370c7c6600beb87824f62830340f0",
+      "contractAddress": "0xc5d4a0E07243D39470A6306d759C5CB3b66f29eB",
+      "status": "ACCEPTED"
+    },
+    "contracts/proof_provenance.py": {
+      "contractFile": "contracts/proof_provenance.py",
+      "sourceSha256": "db970c05d9387f0f5fbbe53df175ce36818be0231b030466b741cf971d4ef2e3",
+      "constructorArgs": [],
+      "sender": "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259",
+      "evmTransaction": "0x61586a92ae8e9741c03878529f00d7e9755e95bd5f52e7e55883cb54524e30d3",
+      "deploymentTransaction": "0x49533e91a69f2be0a55abb83bf144a722c6daf4e64f58087dff2299436d3016a",
+      "contractAddress": "0x481E2DD3aF0E2aC0Fff41c9C93Ca3485e2Ce7D64",
+      "status": "ACCEPTED"
+    },
+    "contracts/proof_receipt.py": {
+      "contractFile": "contracts/proof_receipt.py",
+      "sourceSha256": "490de670c43954ddda4c635cb6114f5737def589ba338df6c6d8c12d9317a900",
+      "constructorArgs": [],
+      "sender": "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259",
+      "evmTransaction": "0x65326677e03b175c97ad8453c50af2240dcddb411be260d661b95ce6b6f431f9",
+      "deploymentTransaction": "0x387abff3d97702a4da0aa029c12a03cd678140a831ae88aa6598c55ba191a416",
+      "contractAddress": "0x5bB179a54FAa5fdd5280Fde16C33099a4526eAF7",
+      "status": "ACCEPTED"
+    },
+    "contracts/proof_review.py": {
+      "contractFile": "contracts/proof_review.py",
+      "sourceSha256": "db854c5f3b56b0b01d3e27e64b9389242f4f2527316b7c2995e13a220dc9e5a8",
+      "constructorArgs": [],
+      "sender": "0x9392F9ED67f8667fE555D2b919C9D84AeE8d3259",
+      "evmTransaction": "0x5d68229ce44931a4f5f6c494f6cb1097ba7e77174c090ca274f9a1872953f14e",
+      "deploymentTransaction": "0xc3a4bac69ea3b20d71190d1729bc0216e59396d2ada33d3da3ade8814b96f4d9",
+      "contractAddress": "0x224ca2474F1AfAD09dd1c16e884a623221e3C9Ce",
+      "status": "ACCEPTED"
+    }
+  },
+  "initialCleanupReadyAt": "2026-10-04T06:11:30Z",
+  "continuationScript": "frontend/scripts/continue-v26-r2.mjs"
 }
